@@ -1,0 +1,9 @@
+# Production Inventory
+name: Production
+description: Production servers inventory
+organization: Default
+kind: ""
+variables:
+  ansible_user: ansible
+  ansible_become: true
+prevent_instance_group_fallback: false

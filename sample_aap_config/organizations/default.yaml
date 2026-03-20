@@ -1,0 +1,4 @@
+# Default Organization
+name: Default
+description: Default organization for all resources
+max_hosts: 0

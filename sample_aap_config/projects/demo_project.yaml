@@ -1,0 +1,11 @@
+# Demo Project
+name: Demo Project
+description: Demo playbooks for testing automation
+organization: Default
+scm_type: git
+scm_url: https://github.com/ansible/ansible-tower-samples.git
+scm_branch: master
+scm_clean: false
+scm_delete_on_update: false
+scm_update_on_launch: true
+allow_override: false

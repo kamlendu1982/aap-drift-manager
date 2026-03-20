@@ -1,0 +1,25 @@
+# Patch Servers Job Template
+name: Patch Servers
+description: Apply security patches to all servers in inventory
+organization: Default
+project: Demo Project
+playbook: playbooks/patch.yml
+inventory: Production
+credential: Machine Credentials
+job_type: run
+verbosity: 1
+forks: 5
+limit: null
+extra_vars:
+  reboot_allowed: true
+  patch_level: security
+become_enabled: true
+diff_mode: false
+allow_simultaneous: false
+use_fact_cache: true
+ask_scm_branch_on_launch: false
+ask_variables_on_launch: true
+ask_limit_on_launch: true
+ask_inventory_on_launch: false
+ask_credential_on_launch: false
+survey_enabled: false

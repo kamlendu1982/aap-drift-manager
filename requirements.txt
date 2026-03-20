@@ -1,0 +1,38 @@
+# CrewAI Framework
+crewai>=0.28.0
+crewai-tools>=0.1.0
+
+# HTTP Client for AAP API
+requests>=2.31.0
+httpx>=0.27.0
+
+# Configuration
+python-dotenv>=1.0.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# YAML Processing
+pyyaml>=6.0.1
+ruamel.yaml>=0.18.0
+
+# Git Operations
+gitpython>=3.1.40
+
+# CLI Interface
+typer>=0.9.0
+rich>=13.7.0
+
+# Diff and Comparison
+deepdiff>=6.7.0
+dictdiffer>=0.9.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.23.0
+pytest-cov>=4.1.0
+responses>=0.24.0
+
+# Development
+black>=23.12.0
+isort>=5.13.0
+mypy>=1.8.0

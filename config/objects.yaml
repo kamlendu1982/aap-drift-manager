@@ -1,0 +1,168 @@
+# AAP Object Type Configuration
+# This file defines how each object type should be handled
+
+object_types:
+  organizations:
+    endpoint: /api/v2/organizations/
+    can_create: true
+    can_update: true
+    can_delete: true
+    key_field: name
+    ignored_fields:
+      - id
+      - url
+      - created
+      - modified
+      - related
+      - summary_fields
+    dependencies: []  # Organizations have no dependencies
+
+  projects:
+    endpoint: /api/v2/projects/
+    can_create: true
+    can_update: true
+    can_delete: true
+    key_field: name
+    ignored_fields:
+      - id
+      - url
+      - created
+      - modified
+      - related
+      - summary_fields
+      - status
+      - scm_revision
+      - last_job_run
+      - last_job_failed
+      - last_update_failed
+      - last_updated
+      - current_job
+      - playbook_files
+    dependencies:
+      - organizations
+      - credentials  # For SCM credentials
+
+  inventories:
+    endpoint: /api/v2/inventories/
+    can_create: true
+    can_update: true
+    can_delete: true
+    key_field: name
+    ignored_fields:
+      - id
+      - url
+      - created
+      - modified
+      - related
+      - summary_fields
+      - has_active_failures
+      - hosts_with_active_failures
+      - total_hosts
+      - total_groups
+      - total_inventory_sources
+      - inventory_sources_with_failures
+      - pending_deletion
+    dependencies:
+      - organizations
+
+  credentials:
+    endpoint: /api/v2/credentials/
+    can_create: true
+    can_update: true
+    can_delete: false  # Be careful with credentials
+    key_field: name
+    ignored_fields:
+      - id
+      - url
+      - created
+      - modified
+      - related
+      - summary_fields
+      - inputs  # Never compare credential secrets
+    dependencies:
+      - organizations
+      - credential_types
+
+  job_templates:
+    endpoint: /api/v2/job_templates/
+    can_create: true
+    can_update: true
+    can_delete: true
+    key_field: name
+    ignored_fields:
+      - id
+      - url
+      - created
+      - modified
+      - related
+      - summary_fields
+      - status
+      - last_job_run
+      - last_job_failed
+      - next_job_run
+      - recent_jobs
+    dependencies:
+      - organizations
+      - projects
+      - inventories
+      - credentials
+
+  workflow_job_templates:
+    endpoint: /api/v2/workflow_job_templates/
+    can_create: true
+    can_update: true
+    can_delete: true
+    key_field: name
+    ignored_fields:
+      - id
+      - url
+      - created
+      - modified
+      - related
+      - summary_fields
+      - status
+      - last_job_run
+      - last_job_failed
+      - next_job_run
+    dependencies:
+      - organizations
+      - inventories
+      - job_templates  # Workflow nodes reference job templates
+
+  teams:
+    endpoint: /api/v2/teams/
+    can_create: true
+    can_update: true
+    can_delete: true
+    key_field: name
+    ignored_fields:
+      - id
+      - url
+      - created
+      - modified
+      - related
+      - summary_fields
+    dependencies:
+      - organizations
+
+  settings:
+    endpoint: /api/v2/settings/
+    can_create: false
+    can_update: true
+    can_delete: false
+    key_field: null  # Settings don't have names
+    ignored_fields:
+      - url
+    dependencies: []
+
+# Order of operations for reconciliation
+# Objects are created in this order, deleted in reverse order
+reconciliation_order:
+  - organizations
+  - teams
+  - credentials
+  - projects
+  - inventories
+  - job_templates
+  - workflow_job_templates
+  - settings
