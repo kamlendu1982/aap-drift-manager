@@ -2,6 +2,7 @@
 
 from crewai import Agent
 
+from src.config import get_maas_llm
 from src.tools import (
     list_aap_objects,
     get_aap_object,
@@ -36,6 +37,7 @@ def create_aap_scanner_agent() -> Agent:
             get_aap_object,
             get_aap_current_state,
         ],
+        llm=get_maas_llm(),
         verbose=True,
         allow_delegation=False,
     )

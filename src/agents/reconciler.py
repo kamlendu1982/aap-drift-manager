@@ -2,6 +2,7 @@
 
 from crewai import Agent
 
+from src.config import get_maas_llm
 from src.tools import (
     create_aap_object,
     update_aap_object,
@@ -43,6 +44,7 @@ def create_reconciler_agent() -> Agent:
             delete_aap_object,
             get_aap_object,
         ],
+        llm=get_maas_llm(),
         verbose=True,
         allow_delegation=False,
     )

@@ -2,6 +2,7 @@
 
 from crewai import Agent
 
+from src.config import get_maas_llm
 from src.tools import (
     read_git_directory,
     parse_yaml_file,
@@ -41,6 +42,7 @@ def create_git_reader_agent() -> Agent:
             pull_git_latest,
             get_desired_state,
         ],
+        llm=get_maas_llm(),
         verbose=True,
         allow_delegation=False,
     )

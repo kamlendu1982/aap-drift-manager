@@ -2,6 +2,7 @@
 
 from crewai import Agent
 
+from src.config import get_maas_llm
 from src.tools import (
     compare_objects,
     find_all_drift,
@@ -42,6 +43,7 @@ def create_drift_analyzer_agent() -> Agent:
             find_all_drift,
             generate_drift_report,
         ],
+        llm=get_maas_llm(),
         verbose=True,
         allow_delegation=False,
     )

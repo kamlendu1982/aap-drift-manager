@@ -23,10 +23,10 @@ class Settings(BaseSettings):
     git_repo_path: str = Field(..., description="Path to Config-as-Code repo")
     git_branch: str = Field("main", description="Git branch to use")
 
-    # LLM Configuration
-    openai_api_key: Optional[str] = Field(None, description="OpenAI API Key")
-    openai_api_base: Optional[str] = Field(None, description="OpenAI API Base URL")
-    openai_model_name: str = Field("gpt-4", description="Model name to use")
+    # MAAS LLM Configuration
+    maas_api_key: str = Field(..., description="MAAS API Key")
+    maas_api_base: str = Field(..., description="MAAS API Base URL")
+    maas_model: str = Field(..., description="MAAS Model name to use")
 
     # Agent Behavior
     dry_run: bool = Field(True, description="Dry run mode")
@@ -99,3 +99,20 @@ def get_settings() -> Settings:
     if _settings is None:
         _settings = load_settings()
     return _settings
+
+
+def get_maas_llm():
+    """Get the MAAS LLM instance configured for CrewAI agents.
+
+    Returns:
+        LLM instance configured with MAAS API settings.
+    """
+    from crewai import LLM
+
+    settings = get_settings()
+
+    return LLM(
+        model=f"openai/{settings.maas_model}",
+        api_key=settings.maas_api_key,
+        base_url=settings.maas_api_base,
+    )
