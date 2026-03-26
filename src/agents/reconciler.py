@@ -1,49 +1,35 @@
-"""Reconciler Agent - Applies changes to sync AAP with Git."""
+"""Reconciler Agent — applies changes to sync AAP with Git."""
 
 from crewai import Agent
 
 from src.config import get_maas_llm
-from src.tools import (
-    create_aap_object,
-    update_aap_object,
-    delete_aap_object,
-    get_aap_object,
-)
+from src.tools.reconcile_tool import reconcile_aap_with_git
 
 
 def create_reconciler_agent() -> Agent:
     """Create the Reconciler Agent.
-    
-    This agent is responsible for:
-    - Reviewing the drift report
-    - Deciding on appropriate actions
-    - Applying changes to bring AAP in sync with Git
-    - Verifying changes were successful
+
+    This agent's ONLY job is to call the 'Reconcile AAP with Git' tool.
+    All logic (reading Git, reading AAP, diffing, creating/updating/deleting)
+    is handled inside that single tool to avoid LLM hallucination.
     """
     return Agent(
         role="AAP Reconciler",
         goal=(
-            "Take the drift report and apply the necessary changes to bring AAP "
-            "in sync with the Git definitions. Create missing objects, update "
-            "modified objects to match their desired configuration, and delete "
-            "extra objects that shouldn't exist. Ensure all changes are applied "
-            "safely and verify the final state."
+            "Call the 'Reconcile AAP with Git' tool to apply the correct changes "
+            "to AAP. This single tool handles everything: reading Git, reading AAP, "
+            "computing drift, and applying changes in dependency order."
         ),
         backstory=(
-            "You are an expert at reconciling infrastructure state with desired "
-            "configurations. You understand the order of operations required when "
-            "making changes to AAP - for example, organizations must exist before "
-            "projects, and projects before job templates. You are careful and "
-            "methodical, always verifying that changes have been applied correctly. "
-            "You respect protected objects and never delete them. In dry-run mode, "
-            "you report what would be changed without actually making changes."
+            "You are a precise infrastructure reconciliation specialist. "
+            "You know that the safest way to reconcile AAP with Git is to use a "
+            "single, atomic tool that handles everything without any LLM decisions. "
+            "Your ONLY job is to call 'Reconcile AAP with Git' with the correct "
+            "object_types argument and report the result. "
+            "You NEVER pretend changes were made — you always call the tool first "
+            "and report exactly what the tool returns."
         ),
-        tools=[
-            create_aap_object,
-            update_aap_object,
-            delete_aap_object,
-            get_aap_object,
-        ],
+        tools=[reconcile_aap_with_git],
         llm=get_maas_llm(),
         verbose=True,
         allow_delegation=False,

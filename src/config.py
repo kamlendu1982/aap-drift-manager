@@ -1,26 +1,40 @@
 """Configuration management for AAP Drift Manager."""
 
-import os
 from pathlib import Path
 from typing import List, Optional
 
 from dotenv import load_dotenv
-from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings
+from pydantic import AliasChoices, Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    # AAP Configuration
-    aap_url: str = Field(..., description="AAP Controller URL")
-    aap_token: Optional[str] = Field(None, description="AAP API Token")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",  # Ignore unrecognised env vars (e.g. AAP_MCP_PORT)
+    )
+
+    # AAP Configuration — accept both canonical names and the names used in .env
+    aap_url: str = Field(
+        ...,
+        validation_alias=AliasChoices("aap_url", "aap_mcp_server_url"),
+        description="AAP Controller URL",
+    )
+    aap_token: Optional[str] = Field(
+        None,
+        validation_alias=AliasChoices("aap_token", "aap_api_token"),
+        description="AAP API Token",
+    )
     aap_username: Optional[str] = Field(None, description="AAP Username")
     aap_password: Optional[str] = Field(None, description="AAP Password")
-    aap_verify_ssl: bool = Field(True, description="Verify SSL certificates")
+    aap_verify_ssl: bool = Field(False, description="Verify SSL certificates")
 
-    # Git Configuration
-    git_repo_path: str = Field(..., description="Path to Config-as-Code repo")
+    # Git Configuration — accepts a local path OR a remote git URL
+    git_repo_path: str = Field(..., description="Local path or remote URL to CaaC repo")
     git_branch: str = Field("main", description="Git branch to use")
 
     # MAAS LLM Configuration
@@ -32,14 +46,20 @@ class Settings(BaseSettings):
     dry_run: bool = Field(True, description="Dry run mode")
     log_level: str = Field("INFO", description="Logging level")
     managed_objects: str = Field(
-        "projects,job_templates,inventories,credentials",
-        description="Comma-separated list of object types to manage"
+        # Ordered by dependency: orgs first, then credential_types, then the rest
+        "organizations,credential_types,execution_environments,"
+        "projects,inventories,credentials,job_templates,teams",
+        description="Comma-separated list of object types to manage (in dependency order)",
     )
 
     # Safety Settings
-    require_confirmation: bool = Field(True, description="Require confirmation for destructive actions")
+    require_confirmation: bool = Field(
+        True, description="Require confirmation for destructive actions"
+    )
     max_deletions: int = Field(10, description="Maximum objects to delete in single run")
-    protected_objects: str = Field("", description="Comma-separated list of protected object names")
+    protected_objects: str = Field(
+        "", description="Comma-separated list of protected object names"
+    )
 
     @field_validator("aap_url")
     @classmethod
@@ -50,7 +70,9 @@ class Settings(BaseSettings):
     @field_validator("git_repo_path")
     @classmethod
     def validate_git_repo_path(cls, v: str) -> str:
-        """Ensure Git repo path exists."""
+        """Accept local paths or remote git URLs (git@... / https://...)."""
+        if v.startswith("git@") or v.startswith("https://") or v.startswith("http://"):
+            return v  # Remote URL — GitTools will clone it lazily
         path = Path(v)
         if not path.exists():
             raise ValueError(f"Git repository path does not exist: {v}")
@@ -71,21 +93,16 @@ class Settings(BaseSettings):
     @property
     def has_valid_auth(self) -> bool:
         """Check if valid authentication is configured."""
-        return bool(self.aap_token) or (bool(self.aap_username) and bool(self.aap_password))
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
+        return bool(self.aap_token) or (
+            bool(self.aap_username) and bool(self.aap_password)
+        )
 
 
 def load_settings() -> Settings:
     """Load settings from environment and .env file."""
-    # Load .env file if it exists
     env_path = Path(".env")
     if env_path.exists():
         load_dotenv(env_path)
-
     return Settings()
 
 
@@ -102,15 +119,10 @@ def get_settings() -> Settings:
 
 
 def get_maas_llm():
-    """Get the MAAS LLM instance configured for CrewAI agents.
-
-    Returns:
-        LLM instance configured with MAAS API settings.
-    """
+    """Get the MAAS LLM instance configured for CrewAI agents."""
     from crewai import LLM
 
     settings = get_settings()
-
     return LLM(
         model=f"openai/{settings.maas_model}",
         api_key=settings.maas_api_key,

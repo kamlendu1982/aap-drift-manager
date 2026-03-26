@@ -1,16 +1,26 @@
 """AAP API tools for interacting with Ansible Automation Platform."""
 
+import re
 from typing import Any, Dict, List, Optional
 
 import requests
 from crewai.tools import tool
 
+_JINJA2_RE = re.compile(r'\{\{.*?\}\}')
+
 from src.config import get_settings
-from src.models import OBJECT_TYPE_ENDPOINTS, ObjectType
+from src.models import (
+    ASSOCIATION_FIELD_MAP,
+    CAAC_STRIP_FIELDS,
+    CAAC_TO_API_FIELD_MAP,
+    DEPENDENCY_FIELD_MAP,
+    OBJECT_TYPE_ENDPOINTS,
+    ObjectType,
+)
 
 
 class AAPClient:
-    """Client for interacting with the AAP API."""
+    """Client for interacting with the AAP Controller API."""
 
     def __init__(
         self,
@@ -18,7 +28,7 @@ class AAPClient:
         token: Optional[str] = None,
         username: Optional[str] = None,
         password: Optional[str] = None,
-        verify_ssl: bool = True,
+        verify_ssl: Optional[bool] = None,   # None → fall back to settings
     ):
         settings = get_settings()
         self.base_url = (url or settings.aap_url).rstrip("/")
@@ -30,27 +40,19 @@ class AAPClient:
 
     @property
     def session(self) -> requests.Session:
-        """Get or create a requests session with authentication."""
         if self._session is None:
-            self._session = requests.Session()
-            self._session.verify = self.verify_ssl
-            
+            s = requests.Session()
+            s.verify = self.verify_ssl
             if self.token:
-                self._session.headers["Authorization"] = f"Bearer {self.token}"
+                s.headers["Authorization"] = f"Bearer {self.token}"
             elif self.username and self.password:
-                self._session.auth = (self.username, self.password)
-            
-            self._session.headers["Content-Type"] = "application/json"
-        
+                s.auth = (self.username, self.password)
+            s.headers["Content-Type"] = "application/json"
+            self._session = s
         return self._session
 
     def _get_endpoint(self, object_type: str) -> str:
-        """Get the API endpoint for an object type."""
-        try:
-            obj_type = ObjectType(object_type)
-            return OBJECT_TYPE_ENDPOINTS[obj_type]
-        except (ValueError, KeyError):
-            return f"/api/v2/{object_type}/"
+        return OBJECT_TYPE_ENDPOINTS.get(object_type, f"/api/v2/{object_type}/")
 
     def _request(
         self,
@@ -59,254 +61,296 @@ class AAPClient:
         data: Optional[Dict] = None,
         params: Optional[Dict] = None,
     ) -> requests.Response:
-        """Make an API request."""
         url = f"{self.base_url}{endpoint}"
-        response = self.session.request(
-            method=method,
-            url=url,
-            json=data,
-            params=params,
-        )
+        response = self.session.request(method=method, url=url, json=data, params=params)
         response.raise_for_status()
         return response
 
-    def list_objects(self, object_type: str) -> List[Dict[str, Any]]:
-        """List all objects of a given type."""
+    # ── Basic CRUD ─────────────────────────────────────────────────────────────
+
+    def list_objects(self, object_type: str, page_size: int = 200) -> List[Dict[str, Any]]:
+        """List all objects of a given type (handles pagination)."""
         endpoint = self._get_endpoint(object_type)
-        objects = []
-        next_url = endpoint
-        
+        objects: List[Dict[str, Any]] = []
+        next_url: Optional[str] = endpoint
+
         while next_url:
             if next_url.startswith("http"):
-                # Full URL from pagination
-                response = self.session.get(next_url)
+                resp = self.session.get(next_url, params={"page_size": page_size})
             else:
-                response = self._request("GET", next_url)
-            
-            response.raise_for_status()
-            data = response.json()
-            
-            objects.extend(data.get("results", []))
-            next_url = data.get("next")
-        
+                resp = self._request("GET", next_url, params={"page_size": page_size})
+            resp.raise_for_status()
+            body = resp.json()
+            objects.extend(body.get("results", []))
+            next_url = body.get("next")
+
+        # For credential_types, filter out built-in (managed) entries
+        if object_type == ObjectType.CREDENTIAL_TYPE:
+            objects = [o for o in objects if not o.get("managed", False)]
+
         return objects
 
-    def get_object(self, object_type: str, object_id: int) -> Dict[str, Any]:
-        """Get a specific object by ID."""
-        endpoint = f"{self._get_endpoint(object_type)}{object_id}/"
-        response = self._request("GET", endpoint)
-        return response.json()
-
     def get_object_by_name(self, object_type: str, name: str) -> Optional[Dict[str, Any]]:
-        """Get an object by name."""
         endpoint = self._get_endpoint(object_type)
-        response = self._request("GET", endpoint, params={"name": name})
-        data = response.json()
-        results = data.get("results", [])
+        resp = self._request("GET", endpoint, params={"name": name})
+        results = resp.json().get("results", [])
         return results[0] if results else None
 
+    def resolve_name_to_id(self, object_type: str, name: str) -> Optional[int]:
+        obj = self.get_object_by_name(object_type, name)
+        return obj["id"] if obj else None
+
+    def get_current_state(self, object_types: List[str]) -> Dict[str, Dict[str, Dict[str, Any]]]:
+        return {t: {o["name"]: o for o in self.list_objects(t)} for t in object_types}
+
+    # ── Dependency resolution ──────────────────────────────────────────────────
+
+    def _resolve_dependencies(
+        self, object_type: str, data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Replace name-valued dependency fields with their integer IDs.
+
+        Also applies CaaC→API field renames and strips CaaC-only fields.
+        """
+        result = dict(data)
+
+        # 1. Strip CaaC-only metadata fields
+        strip = set(CAAC_STRIP_FIELDS.get("_all", []))
+        strip |= set(CAAC_STRIP_FIELDS.get(object_type, []))
+        for field in strip:
+            result.pop(field, None)
+
+        # 2. Rename CaaC fields to API field names
+        for caac_name, api_name in CAAC_TO_API_FIELD_MAP.get(object_type, {}).items():
+            if caac_name in result:
+                result[api_name] = result.pop(caac_name)
+
+        # 3. Resolve name → ID for dependency fields
+        dep_map = DEPENDENCY_FIELD_MAP.get(object_type, {})
+        for field, dep_type in dep_map.items():
+            value = result.get(field)
+            if value and isinstance(value, str):
+                obj_id = self.resolve_name_to_id(dep_type, value)
+                if obj_id is not None:
+                    result[field] = obj_id
+                else:
+                    print(f"[warn] Could not resolve {dep_type} named '{value}' for field '{field}'")
+                    result.pop(field, None)
+
+        # 4. Remove association fields (they are handled via sub-endpoints)
+        for field in ASSOCIATION_FIELD_MAP.get(object_type, {}):
+            result.pop(field, None)
+
+        # 5. Strip fields containing unresolved Jinja2 templates ({{ var }})
+        for key in list(result.keys()):
+            value = result[key]
+            if isinstance(value, str) and _JINJA2_RE.search(value):
+                print(
+                    f"[warn] Removing field '{key}' — contains unresolved "
+                    f"Jinja2 template: {value!r}"
+                )
+                result.pop(key)
+
+        # 6. Strip None values (API rejects null for required fields)
+        result = {k: v for k, v in result.items() if v is not None and v != ""}
+
+        return result
+
+    def _associate_objects(
+        self,
+        object_type: str,
+        object_id: int,
+        data: Dict[str, Any],
+    ) -> None:
+        """Call sub-endpoints to associate list-valued fields (e.g. credentials)."""
+        assoc_map = ASSOCIATION_FIELD_MAP.get(object_type, {})
+        for field, (dep_type, endpoint_template) in assoc_map.items():
+            names = data.get(field, [])
+            if not names:
+                continue
+            endpoint = endpoint_template.format(id=object_id)
+            for name in names:
+                if not isinstance(name, str):
+                    continue
+                dep_id = self.resolve_name_to_id(dep_type, name)
+                if dep_id is not None:
+                    try:
+                        self._request("POST", endpoint, data={"id": dep_id})
+                    except Exception as exc:
+                        print(f"[warn] Could not associate {dep_type} '{name}': {exc}")
+                else:
+                    print(f"[warn] Could not find {dep_type} named '{name}' for association")
+
+    # ── Write operations ───────────────────────────────────────────────────────
+
     def create_object(self, object_type: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Create a new object."""
+        """Create a new object, resolving all name→ID dependencies first."""
+        api_data = self._resolve_dependencies(object_type, data)
         endpoint = self._get_endpoint(object_type)
-        response = self._request("POST", endpoint, data=data)
-        return response.json()
+        resp = self._request("POST", endpoint, data=api_data)
+        created = resp.json()
+        # Associate list-valued fields (e.g. credentials on job_templates)
+        self._associate_objects(object_type, created["id"], data)
+        return created
 
     def update_object(
         self, object_type: str, object_id: int, data: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Update an existing object."""
+        api_data = self._resolve_dependencies(object_type, data)
         endpoint = f"{self._get_endpoint(object_type)}{object_id}/"
-        response = self._request("PATCH", endpoint, data=data)
-        return response.json()
+        resp = self._request("PATCH", endpoint, data=api_data)
+        return resp.json()
 
     def delete_object(self, object_type: str, object_id: int) -> bool:
-        """Delete an object."""
         endpoint = f"{self._get_endpoint(object_type)}{object_id}/"
-        response = self._request("DELETE", endpoint)
-        return response.status_code in (200, 202, 204)
-
-    def get_current_state(self, object_types: List[str]) -> Dict[str, Dict[str, Dict[str, Any]]]:
-        """Get the current state for all specified object types.
-        
-        Returns a nested dict: {object_type: {object_name: object_data}}
-        """
-        current_state = {}
-        for obj_type in object_types:
-            objects = self.list_objects(obj_type)
-            current_state[obj_type] = {obj["name"]: obj for obj in objects}
-        return current_state
-
-    def resolve_name_to_id(self, object_type: str, name: str) -> Optional[int]:
-        """Resolve an object name to its ID."""
-        obj = self.get_object_by_name(object_type, name)
-        return obj["id"] if obj else None
+        resp = self._request("DELETE", endpoint)
+        return resp.status_code in (200, 202, 204)
 
 
-# CrewAI Tool Functions
+# ── CrewAI Tool Functions ──────────────────────────────────────────────────────
+
 @tool("List AAP objects")
 def list_aap_objects(object_type: str) -> str:
     """List all objects of a specific type from AAP.
-    
+
+    For credential_types, only custom (non-built-in) types are listed.
+
     Args:
-        object_type: The type of AAP object (e.g., 'projects', 'job_templates')
-    
-    Returns:
-        A list of objects with their names and IDs.
+        object_type: e.g. 'projects', 'job_templates', 'organizations', 'credentials'
     """
     client = AAPClient()
     try:
         objects = client.list_objects(object_type)
         if not objects:
             return f"No {object_type} found in AAP"
-        
-        summary = [f"Found {len(objects)} {object_type}:"]
+        lines = [f"Found {len(objects)} {object_type} in AAP:"]
         for obj in objects:
             name = obj.get("name", "Unknown")
-            obj_id = obj.get("id", "?")
-            summary.append(f"  - {name} (ID: {obj_id})")
-        
-        return "\n".join(summary)
-    except Exception as e:
-        return f"Error listing {object_type}: {e}"
+            oid = obj.get("id", "?")
+            lines.append(f"  - {name} (ID: {oid})")
+        return "\n".join(lines)
+    except Exception as exc:
+        return f"Error listing {object_type}: {exc}"
 
 
 @tool("Get AAP object details")
 def get_aap_object(object_type: str, name: str) -> str:
     """Get detailed information about a specific AAP object.
-    
+
     Args:
         object_type: The type of AAP object
         name: The name of the object
-    
-    Returns:
-        Detailed object information as YAML.
     """
-    import yaml
+    import yaml as _yaml
     client = AAPClient()
     try:
         obj = client.get_object_by_name(object_type, name)
         if not obj:
             return f"Object not found: {object_type}/{name}"
-        
-        return yaml.dump(obj, default_flow_style=False)
-    except Exception as e:
-        return f"Error getting object: {e}"
+        return _yaml.dump(obj, default_flow_style=False)
+    except Exception as exc:
+        return f"Error getting object: {exc}"
 
 
 @tool("Get AAP current state")
 def get_aap_current_state(object_types: str) -> str:
-    """Get the current state of AAP for specified object types.
-    
+    """Get the current state of AAP for comma-separated object types.
+
     Args:
-        object_types: Comma-separated list of object types.
-    
-    Returns:
-        Summary of current state in AAP.
+        object_types: Comma-separated list, e.g. 'organizations,projects,job_templates'
     """
     client = AAPClient()
     types_list = [t.strip() for t in object_types.split(",")]
-    
     try:
-        current_state = client.get_current_state(types_list)
-        
-        summary = ["Current AAP State:"]
-        for obj_type, objects in current_state.items():
-            summary.append(f"\n{obj_type}: {len(objects)} objects")
+        state = client.get_current_state(types_list)
+        lines = ["Current AAP State:"]
+        for obj_type, objects in state.items():
+            lines.append(f"\n{obj_type}: {len(objects)} objects")
             for name in objects:
-                summary.append(f"  - {name}")
-        
-        return "\n".join(summary)
-    except Exception as e:
-        return f"Error getting current state: {e}"
+                lines.append(f"  - {name}")
+        return "\n".join(lines)
+    except Exception as exc:
+        return f"Error getting current state: {exc}"
 
 
 @tool("Create AAP object")
 def create_aap_object(object_type: str, definition: str) -> str:
-    """Create a new object in AAP.
-    
+    """Create a new object in AAP from a YAML definition.
+
+    Automatically resolves dependency fields (organization, project, inventory,
+    execution_environment, credential_type) from names to IDs. Also handles
+    post-creation association of credentials and galaxy_credentials.
+
     Args:
         object_type: The type of AAP object to create
-        definition: YAML string of the object definition
-    
-    Returns:
-        Result of the creation operation.
+        definition: YAML string of the object definition (from Git CaaC)
     """
-    import yaml
+    import yaml as _yaml
     client = AAPClient()
     settings = get_settings()
-    
+
     if settings.dry_run:
         return f"[DRY RUN] Would create {object_type} with definition:\n{definition}"
-    
+
     try:
-        data = yaml.safe_load(definition)
+        data = _yaml.safe_load(definition)
         result = client.create_object(object_type, data)
         return f"Created {object_type}: {result.get('name')} (ID: {result.get('id')})"
-    except Exception as e:
-        return f"Error creating object: {e}"
+    except Exception as exc:
+        return f"Error creating {object_type}: {exc}"
 
 
 @tool("Update AAP object")
 def update_aap_object(object_type: str, name: str, updates: str) -> str:
-    """Update an existing object in AAP.
-    
+    """Update an existing AAP object to match the Git definition.
+
+    Automatically resolves dependency fields from names to IDs.
+
     Args:
         object_type: The type of AAP object
         name: The name of the object to update
         updates: YAML string of fields to update
-    
-    Returns:
-        Result of the update operation.
     """
-    import yaml
+    import yaml as _yaml
     client = AAPClient()
     settings = get_settings()
-    
+
     if settings.dry_run:
         return f"[DRY RUN] Would update {object_type}/{name} with:\n{updates}"
-    
+
     try:
         obj = client.get_object_by_name(object_type, name)
         if not obj:
             return f"Object not found: {object_type}/{name}"
-        
-        data = yaml.safe_load(updates)
+        data = _yaml.safe_load(updates)
         result = client.update_object(object_type, obj["id"], data)
         return f"Updated {object_type}: {result.get('name')}"
-    except Exception as e:
-        return f"Error updating object: {e}"
+    except Exception as exc:
+        return f"Error updating {object_type}: {exc}"
 
 
 @tool("Delete AAP object")
 def delete_aap_object(object_type: str, name: str) -> str:
-    """Delete an object from AAP.
-    
+    """Delete an object from AAP (only if not protected).
+
     Args:
         object_type: The type of AAP object
         name: The name of the object to delete
-    
-    Returns:
-        Result of the deletion operation.
     """
     client = AAPClient()
     settings = get_settings()
-    
-    # Check if object is protected
+
     if name in settings.protected_object_names:
-        return f"Cannot delete protected object: {name}"
-    
+        return f"Skipped: '{name}' is a protected object"
+
     if settings.dry_run:
         return f"[DRY RUN] Would delete {object_type}/{name}"
-    
+
     try:
         obj = client.get_object_by_name(object_type, name)
         if not obj:
             return f"Object not found: {object_type}/{name}"
-        
         success = client.delete_object(object_type, obj["id"])
-        if success:
-            return f"Deleted {object_type}: {name}"
-        else:
-            return f"Failed to delete {object_type}: {name}"
-    except Exception as e:
-        return f"Error deleting object: {e}"
+        return f"Deleted {object_type}: {name}" if success else f"Failed to delete {object_type}: {name}"
+    except Exception as exc:
+        return f"Error deleting {object_type}/{name}: {exc}"

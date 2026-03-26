@@ -1,26 +1,187 @@
-"""Pydantic models for AAP objects."""
+"""AAP object metadata: endpoints, CaaC file map, dependency map, ignored fields."""
 
-from datetime import datetime
-from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
 
-class ObjectType(str, Enum):
-    """Supported AAP object types."""
+# ── Object type constants ──────────────────────────────────────────────────────
+
+class ObjectType:
     ORGANIZATION = "organizations"
+    CREDENTIAL_TYPE = "credential_types"
+    EXECUTION_ENVIRONMENT = "execution_environments"
     PROJECT = "projects"
     INVENTORY = "inventories"
     CREDENTIAL = "credentials"
     JOB_TEMPLATE = "job_templates"
     WORKFLOW_JOB_TEMPLATE = "workflow_job_templates"
     TEAM = "teams"
-    SETTINGS = "settings"
 
+
+# ── API endpoints ──────────────────────────────────────────────────────────────
+
+_API = "/api/controller/v2"   # AAP 2.5+ uses /api/controller/v2/ (not /api/v2/)
+
+OBJECT_TYPE_ENDPOINTS: Dict[str, str] = {
+    ObjectType.ORGANIZATION:          f"{_API}/organizations/",
+    ObjectType.CREDENTIAL_TYPE:       f"{_API}/credential_types/",
+    ObjectType.EXECUTION_ENVIRONMENT: f"{_API}/execution_environments/",
+    ObjectType.PROJECT:               f"{_API}/projects/",
+    ObjectType.INVENTORY:             f"{_API}/inventories/",
+    ObjectType.CREDENTIAL:            f"{_API}/credentials/",
+    ObjectType.JOB_TEMPLATE:          f"{_API}/job_templates/",
+    ObjectType.WORKFLOW_JOB_TEMPLATE: f"{_API}/workflow_job_templates/",
+    ObjectType.TEAM:                  f"{_API}/teams/",
+}
+
+
+# ── CaaC → agent mapping ───────────────────────────────────────────────────────
+# Each entry maps an object-type name to:
+#   "file"  – filename inside group_vars/all/ in the git repo
+#   "key"   – top-level YAML key containing the list of objects
+#   "order" – creation order for reconciliation (lower = first)
+#
+# IMPORTANT: This repo uses inconsistent variable prefix conventions:
+#   organizations  uses  "aap_organizations"   (NOT controller_organizations)
+#   teams          uses  "aap_teams"           (NOT controller_teams)
+#   job_templates  uses  "controller_templates" (NOT controller_job_templates)
+
+CAAC_FILE_MAP: Dict[str, Dict[str, Any]] = {
+    ObjectType.ORGANIZATION: {
+        "file":  "organizations.yml",
+        "key":   "aap_organizations",
+        "order": 1,
+    },
+    ObjectType.CREDENTIAL_TYPE: {
+        "file":  "credential_types.yml",
+        "key":   "controller_credential_types",
+        "order": 2,
+    },
+    ObjectType.EXECUTION_ENVIRONMENT: {
+        "file":  "execution_environments.yml",
+        "key":   "controller_execution_environments",
+        "order": 3,
+    },
+    ObjectType.PROJECT: {
+        "file":  "projects.yml",
+        "key":   "controller_projects",
+        "order": 4,
+    },
+    ObjectType.INVENTORY: {
+        "file":  "inventories.yml",
+        "key":   "controller_inventories",
+        "order": 4,
+    },
+    ObjectType.CREDENTIAL: {
+        "file":  "credentials.yml",
+        "key":   "controller_credentials",
+        "order": 5,
+    },
+    ObjectType.JOB_TEMPLATE: {
+        "file":  "job_templates.yml",
+        "key":   "controller_templates",
+        "order": 6,
+    },
+    ObjectType.TEAM: {
+        "file":  "teams.yml",
+        "key":   "aap_teams",
+        "order": 6,
+    },
+}
+
+# Ordered list for dependency-safe reconciliation
+MANAGED_OBJECT_ORDER: List[str] = sorted(
+    CAAC_FILE_MAP.keys(), key=lambda k: CAAC_FILE_MAP[k]["order"]
+)
+
+
+# ── Dependency resolution map ──────────────────────────────────────────────────
+# When creating objects via the API, name-valued fields must be resolved to IDs.
+# Format: {object_type: {field_name: type_to_look_up}}
+
+DEPENDENCY_FIELD_MAP: Dict[str, Dict[str, str]] = {
+    ObjectType.ORGANIZATION: {
+        # default_environment is optional — popped if EE doesn't exist yet
+        "default_environment": ObjectType.EXECUTION_ENVIRONMENT,
+    },
+    ObjectType.EXECUTION_ENVIRONMENT: {
+        # Pull-secret credential — optional; popped if credential not found yet
+        "credential": ObjectType.CREDENTIAL,
+    },
+    ObjectType.PROJECT: {
+        "organization": ObjectType.ORGANIZATION,
+    },
+    ObjectType.INVENTORY: {
+        "organization": ObjectType.ORGANIZATION,
+    },
+    ObjectType.CREDENTIAL: {
+        "organization":    ObjectType.ORGANIZATION,
+        "credential_type": ObjectType.CREDENTIAL_TYPE,
+    },
+    ObjectType.JOB_TEMPLATE: {
+        "organization":          ObjectType.ORGANIZATION,
+        "project":               ObjectType.PROJECT,
+        "inventory":             ObjectType.INVENTORY,
+        "execution_environment": ObjectType.EXECUTION_ENVIRONMENT,
+    },
+    ObjectType.TEAM: {
+        "organization": ObjectType.ORGANIZATION,
+    },
+}
+
+# Fields that are *lists* of names and must be associated via a sub-endpoint
+# Format: {object_type: {field_name: (type_to_look_up, sub_endpoint_template)}}
+ASSOCIATION_FIELD_MAP: Dict[str, Dict[str, Tuple[str, str]]] = {
+    ObjectType.JOB_TEMPLATE: {
+        "credentials": (
+            ObjectType.CREDENTIAL,
+            f"{_API}/job_templates/{{id}}/credentials/",
+        ),
+    },
+    ObjectType.ORGANIZATION: {
+        "galaxy_credentials": (
+            ObjectType.CREDENTIAL,
+            f"{_API}/organizations/{{id}}/galaxy_credentials/",
+        ),
+    },
+}
+
+# CaaC field names that differ from the AAP API field names
+CAAC_TO_API_FIELD_MAP: Dict[str, Dict[str, str]] = {
+    ObjectType.JOB_TEMPLATE: {
+        "concurrent_jobs_enabled": "allow_simultaneous",
+    },
+}
+
+# CaaC-only fields that must be stripped before calling the AAP API
+CAAC_STRIP_FIELDS: Dict[str, List[str]] = {
+    ObjectType.PROJECT: ["update_project", "wait"],
+    "_all": [
+        "controller_configuration_projects_async_delay",
+        "controller_configuration_credentials_secure_logging",
+    ],
+}
+
+
+# ── Fields ignored during drift comparison ─────────────────────────────────────
+
+IGNORED_FIELDS = {
+    "id", "type", "url", "related", "summary_fields",
+    "created", "modified",
+    "last_job_run", "last_job_failed", "next_job_run",
+    "status", "current_job",
+    "last_update_failed", "last_updated",
+    "scm_revision", "playbook_files",
+    "custom_virtualenv",
+    "inputs",     # credential secrets — never compared
+    "managed",    # built-in flag on credential_types
+}
+
+
+# ── Lightweight Pydantic models ────────────────────────────────────────────────
 
 class AAPObjectBase(BaseModel):
-    """Base model for all AAP objects."""
     name: str
     description: Optional[str] = ""
 
@@ -29,145 +190,42 @@ class AAPObjectBase(BaseModel):
 
 
 class Organization(AAPObjectBase):
-    """Organization object."""
     max_hosts: Optional[int] = 0
     default_environment: Optional[str] = None
 
 
 class Project(AAPObjectBase):
-    """Project object."""
     organization: str
     scm_type: str = "git"
     scm_url: Optional[str] = None
     scm_branch: Optional[str] = "main"
-    scm_credential: Optional[str] = None
-    scm_clean: bool = False
-    scm_delete_on_update: bool = False
-    scm_update_on_launch: bool = False
-    allow_override: bool = False
-    default_environment: Optional[str] = None
 
 
 class Inventory(AAPObjectBase):
-    """Inventory object."""
     organization: str
-    kind: str = ""
-    host_filter: Optional[str] = None
-    variables: Optional[Dict[str, Any]] = None
-    prevent_instance_group_fallback: bool = False
 
 
 class Credential(AAPObjectBase):
-    """Credential object (secrets not compared)."""
     organization: Optional[str] = None
     credential_type: str
     inputs: Optional[Dict[str, Any]] = Field(default_factory=dict, exclude=True)
 
 
 class JobTemplate(AAPObjectBase):
-    """Job Template object."""
-    organization: Optional[str] = None
     project: str
     playbook: str
-    inventory: Optional[str] = None
-    credential: Optional[str] = None
-    credentials: Optional[List[str]] = None
     job_type: str = "run"
-    verbosity: int = 0
-    forks: int = 0
-    limit: Optional[str] = None
-    extra_vars: Optional[Dict[str, Any]] = None
-    job_tags: Optional[str] = None
-    skip_tags: Optional[str] = None
-    become_enabled: bool = False
-    diff_mode: bool = False
-    allow_simultaneous: bool = False
-    use_fact_cache: bool = False
-    host_config_key: Optional[str] = None
-    ask_scm_branch_on_launch: bool = False
-    ask_diff_mode_on_launch: bool = False
-    ask_variables_on_launch: bool = False
-    ask_limit_on_launch: bool = False
-    ask_tags_on_launch: bool = False
-    ask_skip_tags_on_launch: bool = False
-    ask_job_type_on_launch: bool = False
-    ask_verbosity_on_launch: bool = False
-    ask_inventory_on_launch: bool = False
-    ask_credential_on_launch: bool = False
-    survey_enabled: bool = False
-    webhook_service: Optional[str] = None
-    webhook_credential: Optional[str] = None
-    execution_environment: Optional[str] = None
-    instance_groups: Optional[List[str]] = None
-    labels: Optional[List[str]] = None
-
-
-class WorkflowJobTemplate(AAPObjectBase):
-    """Workflow Job Template object."""
-    organization: Optional[str] = None
-    inventory: Optional[str] = None
-    limit: Optional[str] = None
-    scm_branch: Optional[str] = None
-    extra_vars: Optional[Dict[str, Any]] = None
-    ask_inventory_on_launch: bool = False
-    ask_scm_branch_on_launch: bool = False
-    ask_limit_on_launch: bool = False
-    ask_variables_on_launch: bool = False
-    survey_enabled: bool = False
-    allow_simultaneous: bool = False
-    webhook_service: Optional[str] = None
-    webhook_credential: Optional[str] = None
-    labels: Optional[List[str]] = None
 
 
 class Team(AAPObjectBase):
-    """Team object."""
     organization: str
 
 
-# Mapping of object types to their models
 OBJECT_TYPE_MODELS = {
-    ObjectType.ORGANIZATION: Organization,
-    ObjectType.PROJECT: Project,
-    ObjectType.INVENTORY: Inventory,
-    ObjectType.CREDENTIAL: Credential,
-    ObjectType.JOB_TEMPLATE: JobTemplate,
-    ObjectType.WORKFLOW_JOB_TEMPLATE: WorkflowJobTemplate,
-    ObjectType.TEAM: Team,
-}
-
-
-# API endpoints for each object type
-OBJECT_TYPE_ENDPOINTS = {
-    ObjectType.ORGANIZATION: "/api/v2/organizations/",
-    ObjectType.PROJECT: "/api/v2/projects/",
-    ObjectType.INVENTORY: "/api/v2/inventories/",
-    ObjectType.CREDENTIAL: "/api/v2/credentials/",
-    ObjectType.JOB_TEMPLATE: "/api/v2/job_templates/",
-    ObjectType.WORKFLOW_JOB_TEMPLATE: "/api/v2/workflow_job_templates/",
-    ObjectType.TEAM: "/api/v2/teams/",
-    ObjectType.SETTINGS: "/api/v2/settings/",
-}
-
-
-# Fields to ignore when comparing objects (auto-generated, read-only, or sensitive)
-IGNORED_FIELDS = {
-    "id",
-    "type",
-    "url",
-    "related",
-    "summary_fields",
-    "created",
-    "modified",
-    "last_job_run",
-    "last_job_failed",
-    "next_job_run",
-    "status",
-    "current_job",
-    "last_update_failed",
-    "last_updated",
-    "scm_revision",
-    "playbook_files",
-    "custom_virtualenv",
-    "inputs",  # Credential secrets
+    ObjectType.ORGANIZATION:    Organization,
+    ObjectType.PROJECT:         Project,
+    ObjectType.INVENTORY:       Inventory,
+    ObjectType.CREDENTIAL:      Credential,
+    ObjectType.JOB_TEMPLATE:    JobTemplate,
+    ObjectType.TEAM:            Team,
 }

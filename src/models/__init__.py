@@ -2,17 +2,22 @@
 
 from .aap_objects import (
     AAPObjectBase,
+    ASSOCIATION_FIELD_MAP,
+    CAAC_FILE_MAP,
+    CAAC_STRIP_FIELDS,
+    CAAC_TO_API_FIELD_MAP,
     Credential,
+    DEPENDENCY_FIELD_MAP,
+    IGNORED_FIELDS,
     Inventory,
     JobTemplate,
+    MANAGED_OBJECT_ORDER,
+    OBJECT_TYPE_ENDPOINTS,
+    OBJECT_TYPE_MODELS,
     ObjectType,
     Organization,
     Project,
     Team,
-    WorkflowJobTemplate,
-    IGNORED_FIELDS,
-    OBJECT_TYPE_ENDPOINTS,
-    OBJECT_TYPE_MODELS,
 )
 from .drift_report import (
     ActionStatus,
@@ -25,20 +30,25 @@ from .drift_report import (
 )
 
 __all__ = [
-    # AAP Objects
+    # AAP object metadata
     "AAPObjectBase",
+    "ASSOCIATION_FIELD_MAP",
+    "CAAC_FILE_MAP",
+    "CAAC_STRIP_FIELDS",
+    "CAAC_TO_API_FIELD_MAP",
     "Credential",
+    "DEPENDENCY_FIELD_MAP",
+    "IGNORED_FIELDS",
     "Inventory",
     "JobTemplate",
+    "MANAGED_OBJECT_ORDER",
+    "OBJECT_TYPE_ENDPOINTS",
+    "OBJECT_TYPE_MODELS",
     "ObjectType",
     "Organization",
     "Project",
     "Team",
-    "WorkflowJobTemplate",
-    "IGNORED_FIELDS",
-    "OBJECT_TYPE_ENDPOINTS",
-    "OBJECT_TYPE_MODELS",
-    # Drift Report
+    # Drift report
     "ActionStatus",
     "ActionType",
     "DriftedObject",
