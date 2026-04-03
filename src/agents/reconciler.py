@@ -18,7 +18,8 @@ def create_reconciler_agent() -> Agent:
         goal=(
             "Call the 'Reconcile AAP with Git' tool to apply the correct changes "
             "to AAP. This single tool handles everything: reading Git, reading AAP, "
-            "computing drift, and applying changes in dependency order."
+            "computing drift, and applying changes in dependency order." 
+            "just make sure that you are not deleting the secrets and credentials from AAP even if they are not in Git"
         ),
         backstory=(
             "You are a precise infrastructure reconciliation specialist. "
