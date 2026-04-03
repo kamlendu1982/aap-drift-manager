@@ -1,0 +1,169 @@
+---
+# =============================================================================
+# AAP Drift Manager — Ansible Playbook
+# =============================================================================
+# Runs the CrewAI drift management agent to detect and reconcile configuration
+# drift between a Git CaaC repository and a live Ansible Automation Platform
+# instance.
+#
+# USAGE
+#   Dry-run (report only, no changes applied — DEFAULT):
+#     ansible-playbook aap-drift-manager.yaml
+#
+#   Apply changes (create missing, update modified, delete extra objects):
+#     ansible-playbook aap-drift-manager.yaml -e drift_apply=true
+#
+#   Reconcile specific object types only:
+#     ansible-playbook aap-drift-manager.yaml -e drift_objects="organizations,projects"
+#
+#   Apply + specific types + custom log path:
+#     ansible-playbook aap-drift-manager.yaml \
+#       -e drift_apply=true \
+#       -e drift_objects="organizations,inventories,credentials,job_templates" \
+#       -e drift_log_file="/var/log/aap-drift.log"
+#
+# PREREQUISITES
+#   - Python 3.12 venv at venv/ inside this project directory
+#   - .env file with AAP credentials and Git repo URL (copy from .env.example)
+#   - SSH key loaded (ssh-agent) if GIT_REPO_PATH is an SSH URL
+# =============================================================================
+
+- name: AAP Drift Manager — reconcile AAP with Config-as-Code in Git
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # ── Paths ────────────────────────────────────────────────────────────────
+    # When running inside the AAP Execution Environment the container sets
+    # AAP_DRIFT_PROJECT_DIR=/opt/aap-drift-manager via ENV in the Containerfile.
+    # When running locally (outside EE) it falls back to playbook_dir.
+    drift_project_dir: "{{ lookup('env', 'AAP_DRIFT_PROJECT_DIR') | default(playbook_dir, true) }}"
+    drift_python: "{{ drift_project_dir }}/venv/bin/python3.12"
+    drift_script: "{{ drift_project_dir }}/run_drift.py"
+
+    # ── Run mode ─────────────────────────────────────────────────────────────
+    # drift_apply: true  → apply all changes to AAP
+    # drift_apply: false → dry-run only (default, safe)
+    drift_apply: false
+
+    # ── Object types ─────────────────────────────────────────────────────────
+    # Leave empty to use managed_objects from .env (all supported types).
+    # Override e.g.: "organizations,projects,job_templates"
+    drift_objects: ""
+
+    # ── Log file ─────────────────────────────────────────────────────────────
+    drift_log_file: "/tmp/aap-drift-{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}.log"
+
+  # ── Pre-flight checks ──────────────────────────────────────────────────────
+  pre_tasks:
+    - name: Check Python venv exists
+      ansible.builtin.stat:
+        path: "{{ drift_python }}"
+      register: _venv_stat
+
+    - name: Abort — Python venv not found
+      ansible.builtin.fail:
+        msg: |
+          Python venv not found at: {{ drift_python }}
+          Create it with:
+            cd {{ drift_project_dir }}
+            python3.12 -m venv venv
+            venv/bin/pip install -r requirements.txt
+      when: not _venv_stat.stat.exists
+
+    - name: Check .env file exists
+      ansible.builtin.stat:
+        path: "{{ drift_project_dir }}/.env"
+      register: _env_stat
+
+    - name: Abort — .env file not found
+      ansible.builtin.fail:
+        msg: |
+          .env file not found at: {{ drift_project_dir }}/.env
+          Copy the example and fill in your credentials:
+            cp {{ drift_project_dir }}/.env.example {{ drift_project_dir }}/.env
+      when: not _env_stat.stat.exists
+
+    - name: Check run_drift.py exists
+      ansible.builtin.stat:
+        path: "{{ drift_script }}"
+      register: _script_stat
+
+    - name: Abort — run_drift.py not found
+      ansible.builtin.fail:
+        msg: "run_drift.py not found at: {{ drift_script }}"
+      when: not _script_stat.stat.exists
+
+  # ── Main tasks ─────────────────────────────────────────────────────────────
+  tasks:
+    - name: Display run configuration
+      ansible.builtin.debug:
+        msg:
+          - "============================================================"
+          - " AAP Drift Manager"
+          - "============================================================"
+          - "  Project dir : {{ drift_project_dir }}"
+          - "  Python      : {{ drift_python }}"
+          - "  Mode        : {{ 'APPLY CHANGES' if drift_apply | bool else 'DRY-RUN (no changes applied)' }}"
+          - "  Objects     : {{ drift_objects if drift_objects else 'all managed types (from .env)' }}"
+          - "  Log file    : {{ drift_log_file }}"
+          - "============================================================"
+
+    - name: Build command arguments
+      ansible.builtin.set_fact:
+        _drift_args: >-
+          {{ '--apply' if drift_apply | bool else '' }}
+          {{ ('--objects ' + drift_objects) if drift_objects else '' }}
+
+    - name: Run AAP drift reconciliation agent
+      ansible.builtin.command:
+        cmd: "{{ drift_python }} {{ drift_script }} {{ _drift_args | trim }}"
+        chdir: "{{ drift_project_dir }}"
+      register: _drift_result
+      ignore_errors: true
+
+    - name: Save full output to log file
+      ansible.builtin.copy:
+        content: |
+          ============================================================
+          AAP Drift Manager — Run Log
+          ============================================================
+          Timestamp  : {{ lookup('pipe', 'date --iso-8601=seconds') }}
+          Project    : {{ drift_project_dir }}
+          Mode       : {{ 'APPLY' if drift_apply | bool else 'DRY-RUN' }}
+          Objects    : {{ drift_objects if drift_objects else 'all' }}
+          Exit code  : {{ _drift_result.rc }}
+
+          ── STDOUT ──────────────────────────────────────────────────
+          {{ _drift_result.stdout | default('(no output)') }}
+
+          ── STDERR ──────────────────────────────────────────────────
+          {{ _drift_result.stderr | default('(no errors)') }}
+        dest: "{{ drift_log_file }}"
+        mode: "0644"
+
+    - name: Show reconciliation output
+      ansible.builtin.debug:
+        msg: "{{ _drift_result.stdout_lines }}"
+      when:
+        - _drift_result.stdout_lines is defined
+        - _drift_result.stdout_lines | length > 0
+
+    - name: Show errors from stderr (if any)
+      ansible.builtin.debug:
+        msg: "{{ _drift_result.stderr_lines }}"
+      when:
+        - _drift_result.stderr_lines is defined
+        - _drift_result.stderr_lines | length > 0
+
+    - name: Log file location
+      ansible.builtin.debug:
+        msg: "Full output saved to: {{ drift_log_file }}"
+
+    - name: Fail playbook if drift manager reported an error
+      ansible.builtin.fail:
+        msg: >-
+          AAP Drift Manager exited with code {{ _drift_result.rc }}.
+          Check the log for details: {{ drift_log_file }}
+      when: _drift_result.rc != 0

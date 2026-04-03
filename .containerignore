@@ -1,0 +1,40 @@
+# ── Secrets — NEVER bake these into the image ─────────────────────────────
+.env
+*.key
+*.pem
+*.p12
+manifest_*.zip
+
+# ── Local virtual environment (re-created inside the container) ────────────
+venv/
+.venv/
+
+# ── Python cache ───────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# ── Git history (not needed in the image) ─────────────────────────────────
+.git/
+.gitignore
+
+# ── Test suite (not needed at runtime) ────────────────────────────────────
+tests/
+
+# ── Docs and assets ───────────────────────────────────────────────────────
+README.md
+*.svg
+*.md
+
+# ── IDE / OS cruft ────────────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# ── CI / editor config ────────────────────────────────────────────────────
+.containerignore
