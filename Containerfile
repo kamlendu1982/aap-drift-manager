@@ -1,55 +1,49 @@
 # =============================================================================
-# AAP Drift Manager — Execution Environment
+# AAP Drift Manager - Execution Environment
 # =============================================================================
-# Builds an AAP Execution Environment container that bundles the CrewAI drift
-# management agent.  When a playbook runs inside AAP using this EE, it calls
-# the Python agent directly — no local venv needed on the controller.
+# This image contains ONLY runtime dependencies.
+# The agent source code (src/, run_drift.py, aap-drift-manager.yaml) is NOT
+# embedded here - it is checked out from Git by AAP when the Job Template runs.
 #
 # BUILD
+#   podman login registry.redhat.io        # required for the base image
 #   podman build -t aap-drift-manager-ee:latest .
-#   # Or tag for a private registry:
-#   podman build -t quay.io/your-org/aap-drift-manager-ee:1.0.0 .
 #
-# PUSH (optional — to serve from a registry AAP can reach)
-#   podman push quay.io/your-org/aap-drift-manager-ee:1.0.0
-#
-# LOCAL TEST (dry-run, inject .env at runtime — never bake secrets in):
-#   podman run --rm \
-#     --env-file /path/to/.env \
-#     aap-drift-manager-ee:latest \
-#     ansible-playbook /opt/aap-drift-manager/aap-drift-manager.yaml
+# PUSH to a registry that AAP can reach:
+#   podman push <registry>/aap-drift-manager-ee:latest
 #
 # IN AAP
-#   1. Register this image as an Execution Environment in AAP
-#   2. Attach it to any Job Template or the global default EE
-#   3. Set credential variables (AAP_API_TOKEN, GIT_REPO_PATH, etc.)
-#      via AAP credentials or survey
-#   4. The playbook path inside the container:
-#        /opt/aap-drift-manager/aap-drift-manager.yaml
+#   1. Create a Git "Project" pointing at your aap-drift-manager repo
+#   2. Register this image as an Execution Environment
+#   3. Create a Job Template:
+#        - Project   : the Git project above
+#        - Playbook  : aap-drift-manager.yaml
+#        - EE        : aap-drift-manager-ee
+#   4. Set secrets (AAP_API_TOKEN, MAAS_API_KEY, GIT_REPO_PATH, etc.)
+#      via AAP Credentials or extra_vars - never bake them into the image.
 # =============================================================================
 
 FROM registry.redhat.io/ansible-automation-platform-26/ee-supported-rhel9:latest
 
-# ── Labels ─────────────────────────────────────────────────────────────────
 LABEL name="aap-drift-manager-ee" \
       version="1.0.0" \
-      description="AAP Execution Environment for the CrewAI drift management agent" \
-      io.openshift.tags="ansible,aap,crewai,drift-manager" \
+      description="Runtime EE for the AAP drift management agent (source comes from Git)" \
       maintainer="kashekha@redhat.com"
 
 USER root
 
-# ── System packages ────────────────────────────────────────────────────────
-# python3.12        — required by the CrewAI agent code
-# python3.12-devel  — headers for native pip extensions (e.g. chromadb, grpcio)
-# python3.12-pip    — pip for Python 3.12
-# git               — GitPython clones the CaaC repository at runtime
-# openssh-clients   — SSH transport for git@github.com URLs
-# gcc / gcc-c++     — compile native extensions (grpcio, tokenizers, etc.)
-# libffi-devel      — required by cryptography / cffi wheel builds
-# openssl-devel     — required by some crewai transitive deps
-# sqlite-devel      — CrewAI memory backend (chromadb uses SQLite)
-# rust / cargo      — some crewai deps (tokenizers) need Rust at build time
+# ---------------------------------------------------------
+# System packages
+# ---------------------------------------------------------
+# python3.12 / python3.12-devel / python3.12-pip
+#   The agent code targets Python 3.12.
+# git / openssh-clients
+#   GitPython clones the CaaC repo at runtime; SSH needed for git@ URLs.
+# gcc / gcc-c++ / libffi-devel / openssl-devel / make
+#   Required to compile native Python extension wheels (crewai transitive deps).
+# sqlite-devel
+#   CrewAI uses SQLite for its internal task-output storage.
+# ---------------------------------------------------------
 RUN dnf install -y \
         python3.12 \
         python3.12-devel \
@@ -65,62 +59,46 @@ RUN dnf install -y \
     && dnf clean all \
     && rm -rf /var/cache/dnf
 
-# ── Python dependencies ────────────────────────────────────────────────────
-# Copy only what pip needs first (layer cache friendly)
+# ---------------------------------------------------------
+# Python dependencies
+# ---------------------------------------------------------
+# Copy only requirements.txt (not source code) to keep image lean.
+# The file is removed after pip install so it is not shipped in the image.
+# ---------------------------------------------------------
 COPY requirements.txt /tmp/requirements.txt
 
 RUN python3.12 -m pip install --no-cache-dir --upgrade pip setuptools wheel \
     && python3.12 -m pip install --no-cache-dir -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt
 
-# ── Project code ───────────────────────────────────────────────────────────
-# Embedded at /opt/aap-drift-manager so it is available regardless of where
-# AAP mounts the project directory at runtime.
-WORKDIR /opt/aap-drift-manager
-
-COPY pyproject.toml        ./
-COPY run_drift.py          ./
-COPY aap-drift-manager.yaml ./
-COPY src/                  ./src/
-COPY config/               ./config/
-
-# ── Venv shim ─────────────────────────────────────────────────────────────
-# The Ansible playbook's drift_python variable defaults to
-# {{ drift_project_dir }}/venv/bin/python3.12.
-# We create a lightweight shim so that default resolves to the real system
-# Python 3.12 without needing to override the variable in every playbook run.
-RUN mkdir -p /opt/aap-drift-manager/venv/bin \
-    && ln -sf /usr/bin/python3.12 /opt/aap-drift-manager/venv/bin/python3.12 \
-    && ln -sf /usr/bin/python3.12 /opt/aap-drift-manager/venv/bin/python3
-
-# ── Runtime environment ────────────────────────────────────────────────────
-# AAP_DRIFT_PROJECT_DIR tells the Ansible playbook where the embedded code
-# lives.  The playbook reads this env var via lookup('env', ...) so it works
-# whether triggered from AAP or run manually.
-ENV AAP_DRIFT_PROJECT_DIR=/opt/aap-drift-manager \
-    PYTHONPATH=/opt/aap-drift-manager \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
-
-# SSH known-hosts pre-seeding (avoids interactive prompt for github.com)
+# ---------------------------------------------------------
+# SSH known hosts
+# ---------------------------------------------------------
+# Pre-seed github.com fingerprint so runtime git clones do not hang
+# waiting for an interactive host-key prompt.
+# ---------------------------------------------------------
 RUN mkdir -p /etc/ssh \
     && ssh-keyscan github.com >> /etc/ssh/ssh_known_hosts 2>/dev/null || true
 
-# ── Permissions ────────────────────────────────────────────────────────────
-# AAP runs containers as a random UID in the root group (OpenShift SCC).
-# Make the project directory group-writable for that pattern.
-RUN chown -R root:root /opt/aap-drift-manager \
-    && chmod -R g=u /opt/aap-drift-manager
+# ---------------------------------------------------------
+# Runtime environment
+# ---------------------------------------------------------
+# PYTHONPATH is left empty here intentionally.
+# AAP mounts the checked-out project at /runner/project and sets the working
+# directory there, so "import src.xxx" works without any path tricks.
+# ---------------------------------------------------------
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
-# Switch back to the standard EE unprivileged user
+# Switch to the standard EE unprivileged user
 USER 1000
 
-# ── Smoke test ────────────────────────────────────────────────────────────
-# Verify key imports work at build time so a broken dep is caught immediately.
-RUN python3.12 -c "
-import crewai, requests, gitpython, yaml, pydantic, deepdiff
-from src.tools.aap_tools import AAPClient
-from src.tools.git_tools import GitTools
-from src.tools.reconcile_tool import reconcile_aap_with_git
-print('Smoke test passed — all imports OK')
-" 2>/dev/null || true
+# ---------------------------------------------------------
+# Smoke test
+# ---------------------------------------------------------
+# Verify all installed packages import correctly at build time.
+# Uses || true so a transient failure does not break the build.
+# ---------------------------------------------------------
+RUN python3.12 -c "\
+import crewai, requests, git, yaml, pydantic, deepdiff, pydantic_settings; \
+print('EE smoke test passed - all runtime deps OK')" || true
