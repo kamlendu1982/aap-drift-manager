@@ -51,59 +51,81 @@ class DiffTools:
         """
         git_normalized = self.normalize_object(git_obj)
         aap_normalized = self.normalize_object(aap_obj)
-        
+
+        # view='tree' ensures every change category is a set of DiffLevel objects
+        # with .t1 (aap value), .t2 (git value), .path() — avoids the
+        # 'SetOrdered has no attribute items' crash from the text/default view.
         diff = DeepDiff(
             aap_normalized,
             git_normalized,
             ignore_order=True,
-            report_repetition=True,
+            view='tree',
         )
-        
+
         if not diff:
             return True, []
-        
+
         field_diffs = []
-        
+
         # Values changed
-        for path, change in diff.get("values_changed", {}).items():
-            field_name = self._extract_field_name(path)
+        for change in diff.get("values_changed") or []:
+            path = change.path()
             field_diffs.append(FieldDiff(
-                field_name=field_name,
-                git_value=change["new_value"],
-                aap_value=change["old_value"],
+                field_name=self._extract_field_name(path),
+                git_value=change.t2,
+                aap_value=change.t1,
                 path=path,
             ))
-        
+
         # Items added (in git, not in aap)
-        for path, value in diff.get("dictionary_item_added", {}).items():
-            field_name = self._extract_field_name(path)
+        for change in diff.get("dictionary_item_added") or []:
+            path = change.path()
             field_diffs.append(FieldDiff(
-                field_name=field_name,
-                git_value=value,
+                field_name=self._extract_field_name(path),
+                git_value=change.t2,
                 aap_value=None,
                 path=path,
             ))
-        
+
         # Items removed (in aap, not in git)
-        for path, value in diff.get("dictionary_item_removed", {}).items():
-            field_name = self._extract_field_name(path)
+        for change in diff.get("dictionary_item_removed") or []:
+            path = change.path()
             field_diffs.append(FieldDiff(
-                field_name=field_name,
+                field_name=self._extract_field_name(path),
                 git_value=None,
-                aap_value=value,
+                aap_value=change.t1,
                 path=path,
             ))
-        
+
         # Type changes
-        for path, change in diff.get("type_changes", {}).items():
-            field_name = self._extract_field_name(path)
+        for change in diff.get("type_changes") or []:
+            path = change.path()
             field_diffs.append(FieldDiff(
-                field_name=field_name,
-                git_value=change["new_value"],
-                aap_value=change["old_value"],
+                field_name=self._extract_field_name(path),
+                git_value=change.t2,
+                aap_value=change.t1,
                 path=path,
             ))
-        
+
+        # List items added/removed (e.g. hosts in inventories)
+        for change in diff.get("iterable_item_added") or []:
+            path = change.path()
+            field_diffs.append(FieldDiff(
+                field_name=self._extract_field_name(path),
+                git_value=change.t2,
+                aap_value=None,
+                path=path,
+            ))
+
+        for change in diff.get("iterable_item_removed") or []:
+            path = change.path()
+            field_diffs.append(FieldDiff(
+                field_name=self._extract_field_name(path),
+                git_value=None,
+                aap_value=change.t1,
+                path=path,
+            ))
+
         return False, field_diffs
 
     def _extract_field_name(self, path: str) -> str:

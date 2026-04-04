@@ -60,6 +60,13 @@ class Settings(BaseSettings):
     protected_objects: str = Field(
         "", description="Comma-separated list of protected object names"
     )
+    # Comma-separated object TYPES for which deletion is completely disabled.
+    # Extra objects of these types found in AAP (but not in Git) are silently
+    # kept rather than deleted.  Set in .env, e.g.:  NO_DELETE_TYPES=credentials
+    no_delete_types: str = Field(
+        "",
+        description="Object types where deletion is always skipped (comma-separated)",
+    )
 
     @field_validator("aap_url")
     @classmethod
@@ -89,6 +96,13 @@ class Settings(BaseSettings):
         if not self.protected_objects:
             return []
         return [obj.strip() for obj in self.protected_objects.split(",") if obj.strip()]
+
+    @property
+    def no_delete_type_list(self) -> List[str]:
+        """Object types where deletion is always skipped (code-enforced guardrail)."""
+        if not self.no_delete_types:
+            return []
+        return [t.strip() for t in self.no_delete_types.split(",") if t.strip()]
 
     @property
     def has_valid_auth(self) -> bool:

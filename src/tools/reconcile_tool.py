@@ -147,12 +147,20 @@ def reconcile_aap_with_git(object_types: Optional[str] = None) -> str:
                 report["errors"].append(msg)
                 print(f"  ✗ {msg}")
 
-        # 4c. Delete EXTRA objects (if not protected)
+        # 4c. Delete EXTRA objects (if not protected / not a no-delete type)
         for obj in extra:
             label = f"{obj_type}/{obj.object_name}"
 
+            # Code-enforced guardrail: entire object type is delete-protected
+            if obj_type in settings.no_delete_type_list:
+                msg = f"Skipped delete (no_delete_types guardrail): {label}"
+                report["skipped"].append(msg)
+                print(f"  ⚠ {msg}")
+                continue
+
+            # Individual object protection (by name)
             if obj.object_name in settings.protected_object_names:
-                msg = f"Skipped protected: {label}"
+                msg = f"Skipped protected object: {label}"
                 report["skipped"].append(msg)
                 print(f"  ⚠ {msg}")
                 continue

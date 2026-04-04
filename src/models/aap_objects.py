@@ -110,7 +110,10 @@ DEPENDENCY_FIELD_MAP: Dict[str, Dict[str, str]] = {
         "credential": ObjectType.CREDENTIAL,
     },
     ObjectType.PROJECT: {
-        "organization": ObjectType.ORGANIZATION,
+        "organization":  ObjectType.ORGANIZATION,
+        # scm_credential is renamed to "credential" by CAAC_TO_API_FIELD_MAP first,
+        # then resolved here from name → ID (popped if credential not found)
+        "credential":    ObjectType.CREDENTIAL,
     },
     ObjectType.INVENTORY: {
         "organization": ObjectType.ORGANIZATION,
@@ -151,6 +154,11 @@ ASSOCIATION_FIELD_MAP: Dict[str, Dict[str, Tuple[str, str]]] = {
 CAAC_TO_API_FIELD_MAP: Dict[str, Dict[str, str]] = {
     ObjectType.JOB_TEMPLATE: {
         "concurrent_jobs_enabled": "allow_simultaneous",
+    },
+    ObjectType.PROJECT: {
+        # controller_configuration collection uses "scm_credential";
+        # AAP API /projects/ endpoint uses "credential"
+        "scm_credential": "credential",
     },
 }
 
