@@ -141,6 +141,12 @@ class AAPClient:
         for field in ASSOCIATION_FIELD_MAP.get(object_type, {}):
             result.pop(field, None)
 
+        # 5a. Convert extra_vars dict to JSON string
+        #     AAP API requires extra_vars to be a JSON-encoded string, not a dict.
+        if "extra_vars" in result and isinstance(result["extra_vars"], dict):
+            import json as _json
+            result["extra_vars"] = _json.dumps(result["extra_vars"])
+
         # 5. Strip fields containing unresolved Jinja2 templates ({{ var }})
         for key in list(result.keys()):
             value = result[key]

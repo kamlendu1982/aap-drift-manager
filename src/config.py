@@ -133,10 +133,27 @@ def get_settings() -> Settings:
 
 
 def get_maas_llm():
-    """Get the MAAS LLM instance configured for CrewAI agents."""
+    """Return a CrewAI LLM pointed at the MaaS (OpenAI-compatible) endpoint.
+
+    litellm (used internally by CrewAI) routes 'openai/<model>' through the
+    standard OpenAI Python client.  Depending on the litellm version it may
+    ignore the api_key/base_url kwargs on LLM() and fall back to reading the
+    OPENAI_API_KEY / OPENAI_API_BASE environment variables instead.
+
+    We set both the env vars AND the LLM() kwargs so the credentials are
+    picked up regardless of which code path the installed litellm version uses.
+    This project never uses the real OpenAI — these env vars simply tell
+    litellm where to send requests and what token to use.
+    """
+    import os
     from crewai import LLM
 
     settings = get_settings()
+
+    # Set the env vars litellm checks as a fallback (belt-and-suspenders).
+    os.environ["OPENAI_API_KEY"] = settings.maas_api_key
+    os.environ["OPENAI_API_BASE"] = settings.maas_api_base
+
     return LLM(
         model=f"openai/{settings.maas_model}",
         api_key=settings.maas_api_key,

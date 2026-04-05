@@ -9,6 +9,14 @@ import yaml
 from crewai.tools import tool
 from git import Repo
 
+# Ansible CaaC files use the !unsafe tag to suppress variable interpolation.
+# Python's yaml.SafeLoader doesn't know this tag, so we register a simple
+# constructor that treats !unsafe values as plain strings.
+def _unsafe_constructor(loader: yaml.SafeLoader, node: yaml.ScalarNode) -> str:
+    return loader.construct_scalar(node)
+
+yaml.SafeLoader.add_constructor("!unsafe", _unsafe_constructor)
+
 from src.config import get_settings
 from src.models import CAAC_FILE_MAP, MANAGED_OBJECT_ORDER
 

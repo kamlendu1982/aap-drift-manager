@@ -127,6 +127,9 @@ DEPENDENCY_FIELD_MAP: Dict[str, Dict[str, str]] = {
         "project":               ObjectType.PROJECT,
         "inventory":             ObjectType.INVENTORY,
         "execution_environment": ObjectType.EXECUTION_ENVIRONMENT,
+        # webhook_credential must be a credential ID; if the CaaC value is a
+        # raw token string (not a resolvable credential name) it gets popped.
+        "webhook_credential":    ObjectType.CREDENTIAL,
     },
     ObjectType.TEAM: {
         "organization": ObjectType.ORGANIZATION,
