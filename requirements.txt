@@ -1,6 +1,7 @@
 # CrewAI Framework
 crewai>=0.28.0
 crewai-tools>=0.1.0
+crewai[litellm]>=0.28.0
 
 # HTTP Client for AAP API
 requests>=2.31.0
