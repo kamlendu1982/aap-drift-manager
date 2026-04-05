@@ -26,6 +26,12 @@ rich>=13.7.0
 deepdiff>=6.7.0
 dictdiffer>=0.9.0
 
+# SQLite compatibility fix
+# RHEL9 ships SQLite 3.34.x; ChromaDB (crewai dep) requires >= 3.35.0.
+# pysqlite3-binary bundles its own modern SQLite and is patched in at
+# startup via sitecustomize.py (see Containerfile).
+pysqlite3-binary
+
 # Testing
 pytest>=7.4.0
 pytest-asyncio>=0.23.0

@@ -72,6 +72,30 @@ RUN python3.12 -m pip install --no-cache-dir --upgrade pip setuptools wheel \
     && rm /tmp/requirements.txt
 
 # ---------------------------------------------------------
+# SQLite compatibility patch (sitecustomize.py)
+# ---------------------------------------------------------
+# RHEL9 ships with SQLite 3.34.x, but ChromaDB (pulled in by crewai) requires
+# SQLite >= 3.35.0.  pysqlite3-binary bundles its own modern SQLite and is
+# already installed via requirements.txt.
+#
+# sitecustomize.py is executed automatically by Python before any other code,
+# so replacing sys.modules['sqlite3'] here ensures every import of sqlite3
+# (including chromadb's) gets the bundled 3.35+ version.
+# ---------------------------------------------------------
+RUN python3.12 -c "\
+import site, pathlib; \
+sitedir = site.getsitepackages()[0]; \
+pathlib.Path(sitedir + '/sitecustomize.py').write_text(\
+'# Auto-generated: patch sqlite3 with pysqlite3-binary for ChromaDB compatibility.\n'\
+'try:\n'\
+'    import pysqlite3 as _pysqlite3\n'\
+'    import sys\n'\
+'    sys.modules[\"sqlite3\"] = _pysqlite3\n'\
+'except ImportError:\n'\
+'    pass\n'\
+)"
+
+# ---------------------------------------------------------
 # SSH known hosts
 # ---------------------------------------------------------
 # Pre-seed github.com fingerprint so runtime git clones do not hang
@@ -96,9 +120,12 @@ USER 1000
 # ---------------------------------------------------------
 # Smoke test
 # ---------------------------------------------------------
-# Verify all installed packages import correctly at build time.
-# Uses || true so a transient failure does not break the build.
+# Verify all installed packages (including the sqlite3 patch) work correctly.
+# No || true - a real import failure breaks the build immediately.
 # ---------------------------------------------------------
 RUN python3.12 -c "\
 import crewai, requests, git, yaml, pydantic, deepdiff, pydantic_settings; \
-print('EE smoke test passed - all runtime deps OK')" || true
+import sqlite3; \
+assert sqlite3.sqlite_version_info >= (3, 35, 0), \
+    'SQLite too old: ' + sqlite3.sqlite_version + ' (need >= 3.35.0)'; \
+print('EE smoke test passed - sqlite3 ' + sqlite3.sqlite_version + ' - all deps OK')"
