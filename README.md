@@ -68,6 +68,110 @@ An AI-powered drift management agent for Ansible Automation Platform (AAP) built
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
+---
+
+## GitOps Flow: Git as Single Source of Truth
+
+A push to the CaaC repository automatically triggers AAP to reconcile itself
+against Git — no manual intervention required.
+
+```
+  Developer / CI·CD
+  ─────────────────
+  git push  (commit CaaC changes to main)
+        │
+        │  on: push
+        ▼
+┌───────────────────────────────────────────────────────────────────┐
+│  GitHub — caac-aap-2.5  (Single Source of Truth)                  │
+│                                                                   │
+│  group_vars/all/                                                  │
+│  ├── organizations.yml      key: aap_organizations                │
+│  ├── credential_types.yml   key: controller_credential_types      │
+│  ├── execution_environments.yml                                   │
+│  ├── projects.yml           key: controller_projects              │
+│  ├── inventories.yml        key: controller_inventories           │
+│  ├── credentials.yml        key: controller_credentials           │
+│  ├── job_templates.yml      key: controller_templates             │
+│  └── teams.yml              key: aap_teams                        │
+└───────────────────────────────┬───────────────────────────────────┘
+                                │
+                                │  GitHub Webhook  (on push to main)
+                                │  POST /api/controller/v2/
+                                │       job_templates/{id}/launch/
+                                ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│  AAP Controller                                                          │
+│                                                                          │
+│  ┌─────────────────────────────────────────────────────────────────────┐ │
+│  │  Job Template: aap_drift_manager                                    │ │
+│  │                                                                     │ │
+│  │  Project    : drift_manager  ← git@github.com/…/aap-drift-manager  │ │
+│  │  Playbook   : aap-drift-manager.yaml                                │ │
+│  │  EE         : aap-drift-manager-ee                                  │ │
+│  │  Credential : aap_drift_manager_secrets (Custom Credential Type)    │ │
+│  │               → injects MAAS_API_KEY and AAP_API_TOKEN as env vars  │ │
+│  │  Extra Vars : endpoints, git_repo_path, guardrails, drift_apply …   │ │
+│  └────────────────────────────────┬────────────────────────────────────┘ │
+│                                   │  ansible-playbook aap-drift-manager.yaml
+│                                   ▼                                      │
+│  ┌─────────────────────────────────────────────────────────────────────┐ │
+│  │  Execution Environment: aap-drift-manager-ee                        │ │
+│  │  Image: quay.io/kashekha/aap-drift-manager-ee:latest                │ │
+│  │                                                                     │ │
+│  │  Runtime deps: Python 3.12, crewai[litellm], gitpython, deepdiff … │ │
+│  │  Source code:  mounted at /runner/project/ from Git Project         │ │
+│  │                                                                     │ │
+│  │  Playbook tasks:                                                    │ │
+│  │    1. Write /runner/project/.env                                    │ │
+│  │       (secrets from credential + endpoints from extra_vars)         │ │
+│  │    2. python3.12 run_drift.py                                       │ │
+│  │                                                                     │ │
+│  │  ┌───────────────────────────────────────────────────────────────┐  │ │
+│  │  │  CrewAI Agent  ←── MaaS LLM  (Llama 4 Scout 17B via litellm) │  │ │
+│  │  │                                                               │  │ │
+│  │  │  reconcile_aap_with_git()   ← single atomic tool             │  │ │
+│  │  │                               (no LLM hallucination)          │  │ │
+│  │  │                                                               │  │ │
+│  │  │  Step 1  Clone / pull  caac-aap-2.5                          │  │ │
+│  │  │  Step 2  Read desired state from group_vars/all/             │  │ │
+│  │  │  Step 3  Query AAP API  /api/controller/v2/ for live state   │  │ │
+│  │  │  Step 4  Compute drift per object type                       │  │ │
+│  │  │            MISSING  → schedule CREATE                         │  │ │
+│  │  │            EXTRA    → schedule DELETE  (guardrails apply)     │  │ │
+│  │  │            MODIFIED → schedule UPDATE                         │  │ │
+│  │  │  Step 5  Apply in dependency order:                          │  │ │
+│  │  │            organizations → credential_types →                 │  │ │
+│  │  │            execution_environments →                           │  │ │
+│  │  │            projects / inventories →                           │  │ │
+│  │  │            credentials → job_templates → teams                │  │ │
+│  │  └───────────────────────────────┬───────────────────────────────┘  │ │
+│  └─────────────────────────────────  ┼ ──────────────────────────────┘ │
+│                                      │  AAP REST API calls              │
+│                                      │  /api/controller/v2/…/           │
+│  ┌───────────────────────────────────▼──────────────────────────────┐   │
+│  │  AAP Objects  (guaranteed to match Git after every run)          │   │
+│  │                                                                  │   │
+│  │   ✓ Created  — objects defined in Git but absent from AAP        │   │
+│  │   ✓ Updated  — objects that differ from their Git definition      │   │
+│  │   ✓ Deleted  — objects in AAP with no corresponding Git entry    │   │
+│  │   ⚠ Skipped  — protected types / names (credentials, Default …) │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+### Setting Up the Webhook
+
+1. In AAP — create a **Webhook Credential** (type: GitHub) and attach it to the `aap_drift_manager` Job Template with **Webhook Service: GitHub**. AAP generates a unique Webhook URL and key.
+
+2. In GitHub — go to `caac-aap-2.5` → **Settings → Webhooks → Add webhook**:
+   - **Payload URL**: the AAP webhook URL from step 1
+   - **Content type**: `application/json`
+   - **Secret**: the webhook key from step 1
+   - **Events**: `push` (or filter to specific branches)
+
+3. Every `git push` to `main` will now automatically trigger a drift reconciliation run.
+
 ### Anti-Hallucination Design
 
 The Reconciler agent calls a **single atomic Python tool** (`reconcile_aap_with_git`) that handles the entire workflow internally: read Git, read AAP, compute drift, apply changes. This eliminates any possibility of the LLM fabricating actions or skipping steps — the tool either runs end-to-end or raises an exception.
