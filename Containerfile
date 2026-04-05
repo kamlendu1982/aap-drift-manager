@@ -44,7 +44,7 @@ USER root
 # sqlite-devel
 #   CrewAI uses SQLite for its internal task-output storage.
 # ---------------------------------------------------------
-RUN dnf install -y \
+RUN microdnf install -y \
         python3.12 \
         python3.12-devel \
         python3.12-pip \
@@ -56,7 +56,7 @@ RUN dnf install -y \
         openssl-devel \
         sqlite-devel \
         make \
-    && dnf clean all \
+    && microdnf clean all \
     && rm -rf /var/cache/dnf
 
 # ---------------------------------------------------------
