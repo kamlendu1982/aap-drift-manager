@@ -28,7 +28,7 @@ FROM registry.redhat.io/ansible-automation-platform-26/ee-supported-rhel9:latest
 LABEL name="aap-drift-manager-ee" \
       version="1.0.0" \
       description="Runtime EE for the AAP drift management agent (source comes from Git)" \
-      maintainer="kashekha@redhat.com"
+      maintainer="kamlendu.shekhar@gmail.com"
 
 USER root
 
