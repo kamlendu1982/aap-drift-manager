@@ -87,8 +87,8 @@
     - name: DEBUG - credential injection check
       ansible.builtin.debug:
         msg:
-          - "MAAS_API_KEY  : length={{ lookup('env', 'MAAS_API_KEY') | length }}  preview={{ lookup('env', 'MAAS_API_KEY')[:4] }}****"
-          - "AAP_API_TOKEN : length={{ lookup('env', 'AAP_API_TOKEN') | length }}  preview={{ lookup('env', 'AAP_API_TOKEN')[:4] }}****"
+          - "MAAS_API_KEY  : length={{ lookup('env', 'MAAS_API_KEY') | length }}  preview={{ lookup('env', 'MAAS_API_KEY')[:9] }}****"
+          - "AAP_API_TOKEN : length={{ lookup('env', 'AAP_API_TOKEN') | length }}  preview={{ lookup('env', 'AAP_API_TOKEN')[:9] }}****"
           - "Will write .env : {{ lookup('env', 'MAAS_API_KEY') | length > 0 }}"
 
     # -----------------------------------------------------------------
