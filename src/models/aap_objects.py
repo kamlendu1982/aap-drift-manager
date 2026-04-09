@@ -20,11 +20,19 @@ class ObjectType:
 
 
 # ── API endpoints ──────────────────────────────────────────────────────────────
+#
+# AAP 2.5+ splits object management across two APIs:
+#   Gateway API    /api/gateway/v1/    — organizations, teams (identity layer)
+#   Controller API /api/controller/v2/ — everything else (automation layer)
+#
+# Using the controller API for organizations/teams returns 404 on write
+# operations in AAP 2.5+.
 
-_API = "/api/controller/v2"   # AAP 2.5+ uses /api/controller/v2/ (not /api/v2/)
+_API     = "/api/controller/v2"   # automation-layer objects
+_GATEWAY = "/api/gateway/v1"      # identity-layer objects (orgs, teams)
 
 OBJECT_TYPE_ENDPOINTS: Dict[str, str] = {
-    ObjectType.ORGANIZATION:          f"{_API}/organizations/",
+    ObjectType.ORGANIZATION:          f"{_GATEWAY}/organizations/",
     ObjectType.CREDENTIAL_TYPE:       f"{_API}/credential_types/",
     ObjectType.EXECUTION_ENVIRONMENT: f"{_API}/execution_environments/",
     ObjectType.PROJECT:               f"{_API}/projects/",
@@ -32,7 +40,7 @@ OBJECT_TYPE_ENDPOINTS: Dict[str, str] = {
     ObjectType.CREDENTIAL:            f"{_API}/credentials/",
     ObjectType.JOB_TEMPLATE:          f"{_API}/job_templates/",
     ObjectType.WORKFLOW_JOB_TEMPLATE: f"{_API}/workflow_job_templates/",
-    ObjectType.TEAM:                  f"{_API}/teams/",
+    ObjectType.TEAM:                  f"{_GATEWAY}/teams/",
 }
 
 
@@ -146,6 +154,8 @@ ASSOCIATION_FIELD_MAP: Dict[str, Dict[str, Tuple[str, str]]] = {
         ),
     },
     ObjectType.ORGANIZATION: {
+        # galaxy_credentials is an automation-controller concept — sub-endpoint
+        # stays on the controller API even though the org itself lives on the gateway.
         "galaxy_credentials": (
             ObjectType.CREDENTIAL,
             f"{_API}/organizations/{{id}}/galaxy_credentials/",
