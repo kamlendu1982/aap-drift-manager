@@ -14,6 +14,7 @@ class ObjectType:
     PROJECT = "projects"
     INVENTORY = "inventories"
     CREDENTIAL = "credentials"
+    HOST = "hosts"
     JOB_TEMPLATE = "job_templates"
     WORKFLOW_JOB_TEMPLATE = "workflow_job_templates"
     TEAM = "teams"
@@ -38,6 +39,7 @@ OBJECT_TYPE_ENDPOINTS: Dict[str, str] = {
     ObjectType.PROJECT:               f"{_API}/projects/",
     ObjectType.INVENTORY:             f"{_API}/inventories/",
     ObjectType.CREDENTIAL:            f"{_API}/credentials/",
+    ObjectType.HOST:                  f"{_API}/hosts/",
     ObjectType.JOB_TEMPLATE:          f"{_API}/job_templates/",
     ObjectType.WORKFLOW_JOB_TEMPLATE: f"{_API}/workflow_job_templates/",
     ObjectType.TEAM:                  f"{_GATEWAY}/teams/",
@@ -86,6 +88,11 @@ CAAC_FILE_MAP: Dict[str, Dict[str, Any]] = {
         "key":   "controller_credentials",
         "order": 5,
     },
+    ObjectType.HOST: {
+        "file":  "hosts.yml",
+        "key":   "controller_hosts",
+        "order": 5,   # after inventories; hosts must belong to an existing inventory
+    },
     ObjectType.JOB_TEMPLATE: {
         "file":  "job_templates.yml",
         "key":   "controller_templates",
@@ -130,6 +137,10 @@ DEPENDENCY_FIELD_MAP: Dict[str, Dict[str, str]] = {
         "organization":    ObjectType.ORGANIZATION,
         "credential_type": ObjectType.CREDENTIAL_TYPE,
     },
+    ObjectType.HOST: {
+        # CaaC uses the inventory name; the API requires the inventory ID.
+        "inventory": ObjectType.INVENTORY,
+    },
     ObjectType.JOB_TEMPLATE: {
         "organization":          ObjectType.ORGANIZATION,
         "project":               ObjectType.PROJECT,
@@ -172,6 +183,10 @@ CAAC_TO_API_FIELD_MAP: Dict[str, Dict[str, str]] = {
         # controller_configuration collection uses "scm_credential";
         # AAP API /projects/ endpoint uses "credential"
         "scm_credential": "credential",
+    },
+    ObjectType.HOST: {
+        # CaaC (controller_configuration) uses "enable"; the AAP API uses "enabled"
+        "enable": "enabled",
     },
 }
 
@@ -242,11 +257,29 @@ class Team(AAPObjectBase):
     organization: str
 
 
+class Host(BaseModel):
+    """An inventory host.
+
+    Note: hosts do NOT have a description field in the AAP API (unlike most
+    other object types), so we don't inherit from AAPObjectBase here.
+    The 'inventory' field is resolved from a name to an integer ID before
+    the API call by DEPENDENCY_FIELD_MAP.
+    """
+    name: str
+    inventory: str          # inventory name in CaaC → resolved to ID for API
+    enabled: Optional[bool] = True
+    variables: Optional[str] = ""   # YAML/JSON string of host vars
+
+    class Config:
+        extra = "allow"
+
+
 OBJECT_TYPE_MODELS = {
     ObjectType.ORGANIZATION:    Organization,
     ObjectType.PROJECT:         Project,
     ObjectType.INVENTORY:       Inventory,
     ObjectType.CREDENTIAL:      Credential,
+    ObjectType.HOST:            Host,
     ObjectType.JOB_TEMPLATE:    JobTemplate,
     ObjectType.TEAM:            Team,
 }
