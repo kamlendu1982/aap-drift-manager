@@ -81,6 +81,17 @@
 
   pre_tasks:
     # -----------------------------------------------------------------
+    # DEBUG - show credential injection status (remove after confirming)
+    # Shows key length and first 4 chars only - safe to log
+    # -----------------------------------------------------------------
+    - name: DEBUG - credential injection check
+      ansible.builtin.debug:
+        msg:
+          - "MAAS_API_KEY  : length={{ lookup('env', 'MAAS_API_KEY') | length }}  preview={{ lookup('env', 'MAAS_API_KEY')[:4] }}****"
+          - "AAP_API_TOKEN : length={{ lookup('env', 'AAP_API_TOKEN') | length }}  preview={{ lookup('env', 'AAP_API_TOKEN')[:4] }}****"
+          - "Will write .env : {{ lookup('env', 'MAAS_API_KEY') | length > 0 }}"
+
+    # -----------------------------------------------------------------
     # 1. Write .env from AAP credentials + extra vars (AAP runs only)
     #
     #    This task runs ONLY when MAAS_API_KEY is injected as an env var
