@@ -81,8 +81,9 @@
 
   pre_tasks:
     # -----------------------------------------------------------------
-    # DEBUG - show credential injection status (remove after confirming)
-    # Shows key length and first 4 chars only - safe to log
+    # DEBUG - credential injection check
+    # Tagged 'never' so it is skipped in normal runs.
+    # To enable: ansible-playbook aap-drift-manager.yaml --tags debug
     # -----------------------------------------------------------------
     - name: DEBUG - credential injection check
       ansible.builtin.debug:
@@ -91,6 +92,7 @@
           - "AAP_API_TOKEN env var      : '{{ lookup('env', 'AAP_API_TOKEN') }}'"
           - "maas_api_key  ansible var  : '{{ maas_api_key | default('NOT SET') }}'"
           - "Will write .env            : {{ lookup('env', 'MAAS_API_KEY') | length > 0 }}"
+      tags: [never, debug]
 
     # -----------------------------------------------------------------
     # 1. Write .env from AAP credentials + extra vars (AAP runs only)
