@@ -90,6 +90,8 @@
           - "MAAS_API_KEY  : length={{ lookup('env', 'MAAS_API_KEY') | length }}  preview={{ lookup('env', 'MAAS_API_KEY')[:9] }}****"
           - "AAP_API_TOKEN : length={{ lookup('env', 'AAP_API_TOKEN') | length }}  preview={{ lookup('env', 'AAP_API_TOKEN')[:9] }}****"
           - "Will write .env : {{ lookup('env', 'MAAS_API_KEY') | length > 0 }}"
+          - "{{ MAAS_API_KEY }}"
+          - "{{ AAP_API_TOKEN }}"
 
     # -----------------------------------------------------------------
     # 1. Write .env from AAP credentials + extra vars (AAP runs only)
