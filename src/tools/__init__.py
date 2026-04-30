@@ -18,6 +18,13 @@ from .aap_tools import (
     list_aap_objects,
     update_aap_object,
 )
+from .mcp_tools import (
+    OBJECT_TYPE_DOMAIN_MAP,
+    get_aap_current_state_mcp,
+    get_aap_object_mcp,
+    get_aap_state_via_mcp,
+    list_aap_objects_mcp,
+)
 from .diff_tools import (
     DiffTools,
     compare_objects,
@@ -35,7 +42,7 @@ __all__ = [
     "parse_yaml_file",
     "pull_git_latest",
     "read_git_directory",
-    # AAP Tools
+    # AAP REST Tools (used by reconciler for write operations)
     "AAPClient",
     "create_aap_object",
     "delete_aap_object",
@@ -43,6 +50,12 @@ __all__ = [
     "get_aap_object",
     "list_aap_objects",
     "update_aap_object",
+    # AAP MCP Tools (used by scanner agent for read operations)
+    "OBJECT_TYPE_DOMAIN_MAP",
+    "get_aap_current_state_mcp",
+    "get_aap_object_mcp",
+    "get_aap_state_via_mcp",
+    "list_aap_objects_mcp",
     # Diff Tools
     "DiffTools",
     "compare_objects",

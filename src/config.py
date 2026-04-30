@@ -15,7 +15,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
-        extra="ignore",  # Ignore unrecognised env vars (e.g. AAP_MCP_PORT)
+        extra="ignore",
     )
 
     # AAP Configuration — accept both canonical names and the names used in .env
@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     aap_username: Optional[str] = Field(None, description="AAP Username")
     aap_password: Optional[str] = Field(None, description="AAP Password")
     aap_verify_ssl: bool = Field(False, description="Verify SSL certificates")
+    aap_mcp_port: int = Field(
+        443,
+        description="Port for the AAP MCP domain servers (job_management, platform_configuration, etc.)",
+    )
 
     # Git Configuration — accepts a local path OR a remote git URL
     git_repo_path: str = Field(..., description="Local path or remote URL to CaaC repo")

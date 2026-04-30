@@ -71,15 +71,23 @@ class DriftManagementCrew:
             agent=self.git_reader,
         )
 
-        # ── Task 2: Scan AAP current state ────────────────────────────────────
+        # ── Task 2: Scan AAP current state (via MCP) ─────────────────────────
         scan_aap_task = Task(
             description=(
-                f"Query the AAP Controller API and get the current state for these object types:\n"
+                f"Query the AAP MCP servers and get the current state for these object types:\n"
                 f"{object_types_str}\n\n"
-                f"Use 'Get AAP current state' with the full comma-separated list first, "
-                f"then use 'List AAP objects' for each type individually to get details.\n\n"
-                f"IMPORTANT for credential_types: only custom (non-built-in) types will be "
-                f"returned — built-in types like 'Machine', 'Vault' are automatically filtered out.\n\n"
+                f"Use 'Get AAP current state via MCP' with the full comma-separated list first "
+                f"to see an overview, then use 'List AAP objects via MCP' for each type "
+                f"individually to get names and IDs.\n\n"
+                f"The MCP tools automatically route each object type to the correct AAP MCP "
+                f"domain server:\n"
+                f"  - job_management:         projects, job_templates, workflow_job_templates\n"
+                f"  - platform_configuration: organizations, credential_types, execution_environments\n"
+                f"  - inventory_management:   inventories\n"
+                f"  - security_compliance:    credentials\n"
+                f"  - user_management:        teams\n\n"
+                f"IMPORTANT for credential_types: built-in (managed) types like 'Machine' and "
+                f"'Vault' are automatically filtered out — only custom types are returned.\n\n"
                 f"Report the name and count of every object found for each type."
             ),
             expected_output=(
