@@ -8,7 +8,7 @@ An AI-powered drift management agent for Ansible Automation Platform (AAP) built
 
 1. **Clone / pull** the CaaC Git repository (SSH or HTTPS URL supported)
 2. **Read** desired state from `group_vars/all/` YAML files
-3. **Query** the live AAP instance via `/api/controller/v2/`
+3. **Query** live AAP state via **AAP MCP domain servers** (Model Context Protocol)
 4. **Compute** drift per object type: Extra / Missing / Modified
 5. **Reconcile** in strict dependency order (organizations first, job templates last)
 6. **Report** every action taken with full detail
@@ -42,9 +42,18 @@ An AI-powered drift management agent for Ansible Automation Platform (AAP) built
 │  │ Agent          │──▶│ Agent          │──▶│ Agent                │  │
 │  │                │   │                │   │                      │  │
 │  │ Reads CaaC     │   │ Queries live   │   │ Computes Extra /     │  │
-│  │ desired state  │   │ AAP via API    │   │ Missing / Modified   │  │
-│  └────────────────┘   └────────────────┘   └──────────────────────┘  │
-│                                                         │             │
+│  │ desired state  │   │ AAP via MCP ★  │   │ Missing / Modified   │  │
+│  └────────────────┘   └───────┬────────┘   └──────────────────────┘  │
+│                               │                         │             │
+│          ┌────────────────────┘                         ▼             │
+│          │  AAP MCP Domain Servers                                    │
+│          │  ├── /job_management/mcp         (projects, job_templates) │
+│          │  ├── /platform_configuration/mcp (orgs, cred_types, EEs)  │
+│          │  ├── /inventory_management/mcp   (inventories)            │
+│          │  ├── /security_compliance/mcp    (credentials)            │
+│          │  └── /user_management/mcp        (teams)                  │
+│          │                                              │             │
+│          └──────────────────────────────────────────────             │
 │                                                         ▼             │
 │                                             ┌──────────────────────┐  │
 │                                             │ Reconciler Agent     │  │
@@ -56,6 +65,7 @@ An AI-powered drift management agent for Ansible Automation Platform (AAP) built
                                                          │
                       ┌──────────────────────────────────┘
                       │  reconcile_aap_with_git() tool
+                      │  (uses REST API for write operations)
                       ▼
 ┌──────────────────────────────────────────────────────────────────────┐
 │                   AAP Controller (EC2 / RHEL)                        │
@@ -67,6 +77,26 @@ An AI-powered drift management agent for Ansible Automation Platform (AAP) built
 │   DELETE extra objects        PATCH modified objects                 │
 └──────────────────────────────────────────────────────────────────────┘
 ```
+
+> **★ MCP for Read, REST for Write:** The AAP Scanner agent uses the MCP protocol to
+> read current AAP state. All write operations (create / update / delete) during
+> reconciliation continue to use the AAP REST API directly.
+
+---
+
+## AAP MCP Domain Servers
+
+The scanner agent routes each object type to the appropriate MCP domain server:
+
+| MCP Domain | Endpoint | Object Types |
+|------------|----------|-------------|
+| `job_management` | `https://<host>:<port>/job_management/mcp` | `projects`, `job_templates`, `workflow_job_templates` |
+| `platform_configuration` | `https://<host>:<port>/platform_configuration/mcp` | `organizations`, `credential_types`, `execution_environments` |
+| `inventory_management` | `https://<host>:<port>/inventory_management/mcp` | `inventories` |
+| `security_compliance` | `https://<host>:<port>/security_compliance/mcp` | `credentials` |
+| `user_management` | `https://<host>:<port>/user_management/mcp` | `teams` |
+
+Tool discovery is **dynamic** — on first use the agent calls `list_tools()` on each MCP server and caches the available tool names, so the mapping stays valid even if tool names change between MCP server versions.
 
 ---
 
@@ -119,7 +149,7 @@ against Git — no manual intervention required.
 │  │  Execution Environment: aap-drift-manager-ee                        │ │
 │  │  Image: quay.io/kashekha/aap-drift-manager-ee:latest                │ │
 │  │                                                                     │ │
-│  │  Runtime deps: Python 3.12, crewai[litellm], gitpython, deepdiff … │ │
+│  │  Runtime deps: Python 3.12, crewai[litellm], mcp, httpx, …         │ │
 │  │  Source code:  mounted at /runner/project/ from Git Project         │ │
 │  │                                                                     │ │
 │  │  Playbook tasks:                                                    │ │
@@ -130,17 +160,17 @@ against Git — no manual intervention required.
 │  │  ┌───────────────────────────────────────────────────────────────┐  │ │
 │  │  │  CrewAI Agent  ←── MaaS LLM  (Llama 4 Scout 17B via litellm) │  │ │
 │  │  │                                                               │  │ │
-│  │  │  reconcile_aap_with_git()   ← single atomic tool             │  │ │
-│  │  │                               (no LLM hallucination)          │  │ │
-│  │  │                                                               │  │ │
 │  │  │  Step 1  Clone / pull  caac-aap-2.5                          │  │ │
 │  │  │  Step 2  Read desired state from group_vars/all/             │  │ │
-│  │  │  Step 3  Query AAP API  /api/controller/v2/ for live state   │  │ │
+│  │  │  Step 3  Query AAP MCP servers for current state  ★          │  │ │
+│  │  │            job_management / platform_configuration /          │  │ │
+│  │  │            inventory_management / security_compliance /        │  │ │
+│  │  │            user_management                                    │  │ │
 │  │  │  Step 4  Compute drift per object type                       │  │ │
 │  │  │            MISSING  → schedule CREATE                         │  │ │
 │  │  │            EXTRA    → schedule DELETE  (guardrails apply)     │  │ │
 │  │  │            MODIFIED → schedule UPDATE                         │  │ │
-│  │  │  Step 5  Apply in dependency order:                          │  │ │
+│  │  │  Step 5  Apply in dependency order (REST API):               │  │ │
 │  │  │            organizations → credential_types →                 │  │ │
 │  │  │            execution_environments →                           │  │ │
 │  │  │            projects / inventories →                           │  │ │
@@ -212,12 +242,13 @@ aap-drift-manager/
     │
     ├── agents/
     │   ├── git_reader.py         # Reads CaaC from Git
-    │   ├── aap_scanner.py        # Queries live AAP state
+    │   ├── aap_scanner.py        # Queries live AAP state via MCP ★
     │   ├── drift_analyzer.py     # Compares desired vs actual
     │   └── reconciler.py         # Applies changes (uses reconcile_aap_with_git)
     │
     ├── tools/
     │   ├── git_tools.py          # Clone/pull Git repo; read group_vars/all/
+    │   ├── mcp_tools.py          # MCP client for AAP read operations ★
     │   ├── aap_tools.py          # AAPClient: CRUD via /api/controller/v2/
     │   ├── diff_tools.py         # find_drift() using deepdiff
     │   └── reconcile_tool.py     # Atomic reconcile_aap_with_git() tool
@@ -273,6 +304,16 @@ AAP_API_TOKEN=your_aap_api_token
 
 AAP_VERIFY_SSL=false          # Set true in production with valid certs
 
+# ── AAP MCP Domain Servers ─────────────────────────────────────────
+# Port on which the AAP MCP servers are listening.
+# The scanner agent connects to:
+#   https://<AAP_MCP_SERVER_URL>:<AAP_MCP_PORT>/job_management/mcp
+#   https://<AAP_MCP_SERVER_URL>:<AAP_MCP_PORT>/platform_configuration/mcp
+#   https://<AAP_MCP_SERVER_URL>:<AAP_MCP_PORT>/inventory_management/mcp
+#   https://<AAP_MCP_SERVER_URL>:<AAP_MCP_PORT>/security_compliance/mcp
+#   https://<AAP_MCP_SERVER_URL>:<AAP_MCP_PORT>/user_management/mcp
+AAP_MCP_PORT=443              # Default 443; change if MCP runs on a custom port
+
 # ── Git CaaC Repository ────────────────────────────────────────────
 GIT_REPO_PATH=git@github.com:your-org/caac-aap.git  # SSH URL
 # OR local path: GIT_REPO_PATH=/home/user/caac-aap
@@ -281,6 +322,10 @@ GIT_BRANCH=main
 # ── Agent Behaviour ────────────────────────────────────────────────
 DRY_RUN=true       # true = report only, false = apply changes to AAP
 LOG_LEVEL=INFO
+
+# ── Safety Guardrails ──────────────────────────────────────────────
+NO_DELETE_TYPES=credentials        # Never delete objects of these types
+PROTECTED_OBJECTS=Default          # Never delete objects with these names
 ```
 
 ### SSH for Git
@@ -370,16 +415,16 @@ controller_templates:
 
 ## Supported Object Types
 
-| Object Type | Create | Update | Delete | Notes |
-|-------------|:------:|:------:|:------:|-------|
-| `organizations` | ✅ | ✅ | ✅ | `galaxy_credentials` associated via sub-endpoint |
-| `credential_types` | ✅ | ✅ | ✅ | Built-in managed types are never deleted |
-| `execution_environments` | ⚠️ | ✅ | ⚠️ | Require real image URL (Jinja2 templates stripped) |
-| `projects` | ✅ | ✅ | ✅ | |
-| `inventories` | ✅ | ✅ | ✅ | |
-| `credentials` | ✅ | ✅ | ✅ | `inputs` with Jinja2 stored literally |
-| `job_templates` | ✅ | ✅ | ✅ | `credentials` associated via sub-endpoint |
-| `teams` | ✅ | ✅ | ✅ | |
+| Object Type | Read (MCP) | Create | Update | Delete | Notes |
+|-------------|:----------:|:------:|:------:|:------:|-------|
+| `organizations` | ✅ | ✅ | ✅ | ✅ | `galaxy_credentials` associated via sub-endpoint |
+| `credential_types` | ✅ | ✅ | ✅ | ✅ | Built-in managed types are never deleted |
+| `execution_environments` | ✅ | ⚠️ | ✅ | ⚠️ | Require real image URL (Jinja2 templates stripped) |
+| `projects` | ✅ | ✅ | ✅ | ✅ | |
+| `inventories` | ✅ | ✅ | ✅ | ✅ | |
+| `credentials` | ✅ | ✅ | ✅ | ✅ | `inputs` with Jinja2 stored literally |
+| `job_templates` | ✅ | ✅ | ✅ | ✅ | `credentials` associated via sub-endpoint |
+| `teams` | ✅ | ✅ | ✅ | ✅ | |
 
 ---
 
@@ -397,6 +442,9 @@ Objects protected by AAP (e.g. `Control Plane Execution Environment`, `Ansible G
 ### Second-pass Dependencies
 When `organizations.default_environment` references an EE that doesn't exist yet, the field is silently dropped on first run. Run the agent again after EEs are created to populate this field.
 
+### MCP Server Availability
+The scanner agent requires the AAP MCP domain servers to be reachable at `AAP_MCP_PORT`. If a domain server is down, the agent will report an error for those object types but the reconciler will still attempt to proceed with any data already gathered.
+
 ---
 
 ## Safety Features
@@ -404,9 +452,11 @@ When `organizations.default_environment` references an EE that doesn't exist yet
 | Feature | Behaviour |
 |---------|-----------|
 | **Dry-run mode** | `DRY_RUN=true` reports all planned changes without touching AAP |
+| **MCP read / REST write separation** | AAP state is read via MCP (read-only); writes go through the REST API with full validation |
 | **System object protection** | 403 responses on DELETE are treated as "skipped", not errors |
 | **Jinja2 stripping** | Fields with `{{ ... }}` are removed before API calls to prevent rejections |
-| **Protected names list** | Set `PROTECTED_OBJECT_NAMES` in `.env` to prevent deletion of specific objects |
+| **Protected names list** | Set `PROTECTED_OBJECTS` in `.env` to prevent deletion of specific objects |
+| **No-delete types** | Set `NO_DELETE_TYPES` in `.env` to skip deletion for entire object categories |
 | **Dependency ordering** | Objects are always created in foreign-key safe order |
 | **SSL control** | `AAP_VERIFY_SSL=false` for self-signed certs (set `true` in production) |
 
@@ -419,28 +469,28 @@ Reconciling 8 object types …
 
 ── organizations ──
   Git: 2 objects
-  AAP: 0 objects
+  AAP: 0 objects  (queried via MCP: platform_configuration)
   Drift → 0 extra, 2 missing, 0 modified
   ✓ Created organizations/config_as_code (ID: 3)
   ✓ Created organizations/windows_usecase (ID: 4)
 
 ── execution_environments ──
   Git: 2 objects
-  AAP: 0 objects
+  AAP: 0 objects  (queried via MCP: platform_configuration)
   Drift → 0 extra, 2 missing, 0 modified
   [warn] Removing field 'image' — contains unresolved Jinja2 template
   ✗ Failed to create execution_environments/supported: 400 - {'image': ['This field may not be blank.']}
 
 ── projects ──
   Git: 2 objects
-  AAP: 0 objects
+  AAP: 0 objects  (queried via MCP: job_management)
   Drift → 0 extra, 2 missing, 0 modified
   ✓ Created projects/config_as_code (ID: 8)
   ✓ Created projects/windows_usecases (ID: 9)
 
 ── inventories ──
   Git: 2 objects
-  AAP: 0 objects
+  AAP: 0 objects  (queried via MCP: inventory_management)
   Drift → 0 extra, 2 missing, 0 modified
   ✓ Created inventories/config_as_code (ID: 5)
   ✓ Created inventories/windows (ID: 6)
@@ -461,9 +511,9 @@ Reconciliation Complete [APPLIED]
 
 - [redhat-cop/controller_configuration](https://github.com/redhat-cop/controller_configuration) — AAP Config-as-Code Ansible collection (CaaC format this tool reads)
 - [crewAI](https://github.com/joaomdmoura/crewAI) — Multi-agent orchestration framework
+- [modelcontextprotocol/python-sdk](https://github.com/modelcontextprotocol/python-sdk) — MCP Python SDK used for AAP state queries
 - [ansible/awx](https://github.com/ansible/awx) — Open-source AWX (upstream of AAP)
 
 ---
-
 
 Built for Red Hat Ansible Automation Platform drift management using the CrewAI agentic framework.
