@@ -1,0 +1,26 @@
+---
+- name: Deploy Splunk using Podman
+  hosts: localhost
+  become: true
+  vars:
+    splunk_image: "splunk/splunk:latest"
+    splunk_password: "ansible123"
+
+  tasks:
+    - name: Install Podman
+      dnf:
+        name: podman
+        state: present
+
+    - name: Ensure Splunk container is running
+      containers.podman.podman_container:
+        name: splunk_instance
+        image: "{{ splunk_image }}"
+        state: started
+        restart_policy: always
+        ports:
+          - "8088:8088"
+          - "8000:8000"
+        env:
+          SPLUNK_START_ARGS: "--accept-license"
+          SPLUNK_PASSWORD: "{{ splunk_password }}"
