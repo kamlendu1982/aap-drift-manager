@@ -1,6 +1,6 @@
 ---
 - name: Deploy Splunk using Podman (Built-in Modules Only)
-  hosts: localhost
+  hosts: all
   connection: local
   become: true
   vars:
