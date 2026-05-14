@@ -16,7 +16,7 @@
         podman run -d 
         --name splunk_instance
         --restart always
-        -p 8088:8088 -p 8000:8000 
+        -p 8088:9088 -p 8000:9000 
         -e SPLUNK_START_ARGS='--accept-license' 
         -e SPLUNK_PASSWORD='{{ splunk_password }}' 
         splunk/splunk:latest
