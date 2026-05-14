@@ -1,7 +1,6 @@
 ---
 - name: Deploy Splunk using Podman (Built-in Modules Only)
   hosts: all
-  connection: local
   become: true
   vars:
     splunk_password: "ansible123"
