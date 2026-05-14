@@ -17,7 +17,8 @@
         --name splunk_instance
         --restart always
         -p 9088:8088 -p 9000:8000 
-        -e SPLUNK_START_ARGS='--accept-license' 
+        -e SPLUNK_START_ARGS='--accept-license'
+        -e "SPLUNK_GENERAL_TERMS=--accept-sgt-current-at-splunk-com"
         -e SPLUNK_PASSWORD='{{ splunk_password }}' 
         splunk/splunk:latest
       when: "'splunk_instance' not in podman_containers.stdout"
