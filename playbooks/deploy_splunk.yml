@@ -1,6 +1,7 @@
 ---
 - name: Deploy Splunk using Podman
   hosts: localhost
+  connection: local
   become: true
   vars:
     splunk_image: "splunk/splunk:latest"
