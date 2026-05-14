@@ -7,11 +7,6 @@
     splunk_password: "ansible123"
 
   tasks:
-    - name: Install Podman
-      ansible.builtin.dnf:
-        name: podman
-        state: present
-
     - name: Check if Splunk container already exists
       ansible.builtin.shell: "podman ps -a --format '{% raw %}{{.Names}}{% endraw %}'"
       register: podman_containers
