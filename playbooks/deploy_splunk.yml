@@ -1,27 +1,29 @@
 ---
-- name: Deploy Splunk using Podman
+- name: Deploy Splunk using Podman (Built-in Modules Only)
   hosts: localhost
   connection: local
   become: true
   vars:
-    splunk_image: "splunk/splunk:latest"
     splunk_password: "ansible123"
 
   tasks:
     - name: Install Podman
-      dnf:
+      ansible.builtin.dnf:
         name: podman
         state: present
 
-    - name: Ensure Splunk container is running
-      containers.podman.podman_container:
-        name: splunk_instance
-        image: "{{ splunk_image }}"
-        state: started
-        restart_policy: always
-        ports:
-          - "8088:8088"
-          - "8000:9000"
-        env:
-          SPLUNK_START_ARGS: "--accept-license"
-          SPLUNK_PASSWORD: "{{ splunk_password }}"
+    - name: Check if Splunk container already exists
+      ansible.builtin.shell: "podman ps -a --format '{% raw %}{{.Names}}{% endraw %}'"
+      register: podman_containers
+      changed_when: false
+
+    - name: Run Splunk container
+      ansible.builtin.shell: >
+        podman run -d 
+        --name splunk_instance
+        --restart always
+        -p 8088:8088 -p 8000:8000 
+        -e SPLUNK_START_ARGS='--accept-license' 
+        -e SPLUNK_PASSWORD='{{ splunk_password }}' 
+        splunk/splunk:latest
+      when: "'splunk_instance' not in podman_containers.stdout"
